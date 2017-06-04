@@ -1,0 +1,21 @@
+[
+	{
+		authenticatorCert:
+
+	},
+	{user:"",dateFrom:"",dateTo:""},
+	{
+		name: ""
+		import:{
+			src:"",
+			mappings:[
+				{expose:"", from:""}
+			]
+		},
+		schema: JSONSchema,
+		table:"",
+		id:"",
+		indexes:[],
+		route: ""
+	}
+]

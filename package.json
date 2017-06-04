@@ -1,0 +1,20 @@
+{
+  "name": "ocrud",
+  "version": "0.0.0",
+  "description": "Declare & Maintain JSON data",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Fabio Beltramini",
+  "license": "LGPL-3.0+",
+  "dependencies": {
+    "bluebird": "^3.5.0",
+    "body-parser": "^1.17.2",
+    "express": "^4.15.3",
+    "hanson": "^1.2.0",
+    "pg": "^6.2.3",
+    "promisify-node": "^0.4.0"
+  },
+  "repository":"https://github.com/fabiocbinbutter/ocrud.git"
+}
