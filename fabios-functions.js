@@ -6,7 +6,7 @@ module.exports={
 ,min:	function min(a,b){return a<b?a:b}
 ,max:	function max(a,b){return a>b?a:b}
 ,unique:function unique(x,i,a){return a.indexOf(x)==i}
-,not:	function not(f){return function(x){return !(f(x))}}
+,not:	function not(f){return function(...x){return !(f(...x))}}
 ,truthy:function truthy(x){return !!x}
 ,flatten:function flatten(a,b){return a.concat(b)}
 ,sorter:function sorter(f){return function(a,b){var fa=f(a),fb=f(b);return fa>fb?1:fa<fb?-1:0;}}
@@ -79,3 +79,4 @@ module.exports={
 					}
 			}
 	}
+}

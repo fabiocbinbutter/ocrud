@@ -1,21 +1,28 @@
-[
-	{
-		authenticatorCert:
-
-	},
-	{user:"",dateFrom:"",dateTo:""},
-	{
-		name: ""
-		import:{
-			src:"",
-			mappings:[
-				{expose:"", from:""}
-			]
+{
+	db:{
+			user: 'ocrud_app',
+			database: 'ocrud',
+			password: '',
+			host: 'localhost',
+			port: 5432,
+			max: 10,
+			idleTimeoutMillis: 60000
 		},
-		schema: JSONSchema,
-		table:"",
-		id:"",
-		indexes:[],
-		route: ""
-	}
-]
+	authenticatorCert:"",
+	users:{
+			user:"",dateFrom:"",dateTo:""
+		},
+	entities:[{
+			name: "planets"
+			/*import:{
+				src:"",
+				mappings:[
+					{expose:"", from:""}
+				]
+			},*/
+			schema: {type:"string",title:"Planet"},
+			table:"",
+			route: ""
+		}
+		]
+}

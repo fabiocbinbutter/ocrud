@@ -6,67 +6,75 @@ const hanson = require('hanson')
 const express = require('express')
 const bodyParser = require('body-parser')
 const pg=require('pg')
-const db=new pg.Pool(config.db)
-const {	not,unique,truthy
-	} = require('./fabios-functions.js')
+const {	not,unique,truthy,peek} = require('./fabios-functions.js')
 const sqlReservedWords=JSON.parse(fs.readFileSync('./sql-reserved-words.json'))
-const jsonschema = require('jsonschema').validate;
+const jsonschema = require('jsonschema').validate
 
-reload()
+reload()(0,0,console.error)
 
 //Functions
-function reload(priorApp){
-		const app = express()
-		pfs.readFile('config.hanson')
-		.then(configStr=>hanson.parse(configStr))
-		.then(config=>{if(!Array.isArray(config)){throw "Server configuration error: Config must be an array"}})
-		.then(config=>({
-				raw:config,
-				entities:config.filter(c=>c.name && c.id).map(c=>Object.assign({},c,{
-						table:dbName(c.table || c.name),
-						route:routeName(c.route || c.name)
-					}))
-			}))
-		.then(config=>{//Validate
-				var validation=validateConfig(config)
-				if(validation.errors.length){
-						throw "Server configuration errors:\n> "+validation.errors.join("\n> ")
-					}
-				return Object.assign({},config,{warnings:validation.warnings})
-			})
-		.then(config=>//Create db tables
-				Promise.all(config.entities.map(c=>
-						db.query(`CREATE TABLE IF NOT EXISTS ${c.table} (
-								id SERIAL PRIMARY KEY,
-								eid INT,
-								user_id INT NOT NULL,
-								edit_dt INT NOT NULL,
-								next_dt INT,
-								start_dt INT,
-								end_dt INT,
-								json JSONB
-								);
-								CREATE INDEX idx_gin_${c.table} ON ${c.table} USING gin (json jsonb_path_ops);
-							`)
-					))
-				.then(()=>config)
-			)
-		.then(config=>{//Apply routes
+function reload(priorServer){
+		return function(req,res,next){
 				const app = express()
-				const auth = authFromConfig(config)
-				entities.forEach(e=>{
-						app.use(resLocals(()=>parseInt(Date.now()/1000),"dt"))
-						app.get ("/schema"+e.route, auth, expressSchema(e))
-						app.get ("/list"+e.route,auth, expressListEntity(e))
-						app.post("/new"+e.route, auth, bodyParser,expressNewEntity(e))
-						app.get ("/get"+e.route+"/:eid", auth, expressGetEntity(e))
-						app.post("/set"+e.route+"/:eid", auth, bodyParser,expressSetEntity(e))
-						app.set('json spaces',2)
-						app.use(errorHandler)
+				pfs.readFile('config.hanson','utf8')
+				.then(configStr=>hanson.parse(configStr))
+				.then(config=>({
+						entities:config.entities.filter(c=>c.name).map(c=>Object.assign({},c,{
+								table:dbName(c.table || c.name),
+								route:routeName(c.route || c.name)
+							})),
+						db:new pg.Pool(config.db)
+					}))
+				.then(peek)
+				.then(config=>{//Validate
+						var validation=validateConfig(config)
+						if(validation.errors.length){
+								throw "Server configuration errors:\n> "+validation.errors.join("\n> ")
+							}
+						return Object.assign({},config,{warnings:validation.warnings})
 					})
-			})
-		//Expose app
+				.then(ctx=>//Create db tables
+						Promise.all(ctx.entities.map(c=>
+								ctx.db.query(`CREATE TABLE IF NOT EXISTS ${c.table} (
+										id SERIAL PRIMARY KEY,
+										eid INT,
+										user_id INT NOT NULL,
+										edit_dt INT NOT NULL,
+										next_dt INT,
+										start_dt INT,
+										end_dt INT,
+										json JSONB
+										);
+										CREATE INDEX idx_gin_${c.table} ON ${c.table} USING gin (json jsonb_path_ops);
+									`)
+							))
+						.then(()=>ctx)
+					)
+				.then(ctx=>{//Apply routes
+						const app = express()
+						const auth = authFromConfig(ctx)
+						ctx.entities.forEach(e=>{
+								app.use(resLocals(()=>parseInt(Date.now()/1000),"dt"))
+								app.get ("/schema"+e.route, auth, expressSchema(e))
+								app.get ("/list"+e.route,auth, expressListEntity(e))
+								app.post("/new"+e.route, auth, bodyParser,expressNewEntity(e))
+								app.get ("/get"+e.route+"/:eid", auth, expressGetEntity(e))
+								app.post("/set"+e.route+"/:eid", auth, bodyParser,expressSetEntity(e))
+								app.set('json spaces',2)
+								app.use(errorHandler)
+							})
+						app.get("/types", auth, expressTypes(ctx))
 
+						//Shenanigans
+						const priorOrNone=priorServer||{close:function(f){f()}};
+						res&&res.send(200).json("New config loaded. Restarting webserver...")
+						priorOrNone.close(function(){
+								const newServer=app.listen(8080,()=>console.log("New server started"))
+								app.get("/reload",auth, reload(newServer))
+							})
+					})
+				.catch(next)
+			}
 	}
 
 function validateConfig(config){
@@ -80,6 +88,12 @@ function validateConfig(config){
 							)
 					].filter(truthy),
 				warnings:[]
+			}
+	}
+
+function expressTypes(config){
+		return function(req,res,next){
+				res.status(200).json(config.entities.map(e=>({name:e.name,route:e.route})))
 			}
 	}
 
@@ -116,7 +130,7 @@ function expressNewEntity(ent){
 						 		0,			$1,
 														NULL,		NULL,		NULL,		$2)
 						RETURNING eid
-						`,[					res.locals.dt									JSON.stringify(req.body)]
+						`,[					res.locals.dt,									JSON.stringify(req.body)]
 					)
 				.then(result=>res.redirect(303,"/get"+ent.route+"/"+result.rows[0].eid))
 				.catch(next)
@@ -165,7 +179,7 @@ function routeName(str){
 		("/"+str)
 		.replace(/[^\w\/]+(-+[^\w\/]*)*/g,"-") //Non-word, non-slash runs are replaced with a dash
 		.replace(/\/\/+/g,"/")//No consecutive slashes
-		.replace(/\/$+/g,"")//No trailing slash
+		.replace(/\/$/g,"")//No trailing slash
 		.toLowerCase()
 	}
 function msgIfArr(msg,arr,delim){return arr.length && msg+arr.join(delim||", ")}
@@ -173,12 +187,12 @@ function errorHandler (err, req, res, next) {
 		if(!err.status /*&& !(err.message && err.message.status)*/){
 				console.error("Internal error: ",err)
 			}
-		res.status(err.status || /*(err.message && err.message.status)*/ || 500).json({
+		res.status(err.status || /*(err.message && err.message.status) ||*/ 500).json({
 				error: err.message || err,
 				trace:(config.env=='dev' && err.stack ? err.stack.split("\n") : undefined)
 			})
 	}
-
+/*
 function rowsElse(fnOrStatus,msg){
 		return function fnRowsElse(result){
 				if(result && result.rows && result.rows.length){
@@ -192,3 +206,4 @@ function rowsElse(fnOrStatus,msg){
 					}
 			}
 	}
+*/
