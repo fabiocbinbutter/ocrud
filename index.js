@@ -10,29 +10,49 @@ const {	not,unique,truthy,peek} = require('./fabios-functions.js')
 const sqlReservedWords=JSON.parse(fs.readFileSync('./sql-reserved-words.json'))
 const jsonschema = require('jsonschema').validate
 
+
+
 reload()(0,0,console.error)
 
 //Functions
+function extend(subjOrHow, howOrNone){
+		if(howOrNone){ //Arity-2 version is extend(subj, how)
+				return extend(howOrNone)(subjOrHow)
+			}
+		//Curried version is extend(how)(subj) to use with promises
+		const how=subjOrHow;
+		return function(subj){
+				if(Array.isArray(subj)){
+						return subj.map(item=>extend(item,how))
+					}
+				return Object.assign({},subj,
+						typeof how=="function"
+						? how(subj) //Extend the subject with a transformation of itself
+						: how		//Extend the subject with a given object
+					)
+			}
+	}
 function reload(priorServer){
 		return function(req,res,next){
 				const app = express()
 				pfs.readFile('config.hanson','utf8')
-				.then(configStr=>hanson.parse(configStr))
-				.then(config=>({
-						entities:config.entities.filter(c=>c.name).map(c=>Object.assign({},c,{
-								table:dbName(c.table || c.name),
-								route:routeName(c.route || c.name)
-							})),
-						db:new pg.Pool(config.db)
-					}))
+				.then(file=>hanson.parse(file))
+				.then(extend(config=>({ //Pre-validation transformations
+						entities:extend(config.entities,entity=>({
+								table:dbName(entity.table || entity.name),
+								route:routeName(entity.route || entity.name)
+							}))
+					})))
 				.then(peek)
-				.then(config=>{//Validate
-						var validation=validateConfig(config)
-						if(validation.errors.length){
-								throw "Server configuration errors:\n> "+validation.errors.join("\n> ")
-							}
-						return Object.assign({},config,{warnings:validation.warnings})
+				.then(extend(validateConfig))
+				.then(config=>{
+						if(config.errors.length){
+								throw "Server configuration errors:\n> "+config.errors.join("\n> ")
+							} else { return config}
 					})
+				.then(extend(config=>({
+						db:new pg.Pool(config.db)
+					})))
 				.then(ctx=>//Create db tables
 						Promise.all(ctx.entities.map(c=>
 								ctx.db.query(`CREATE TABLE IF NOT EXISTS ${c.table} (
@@ -45,7 +65,7 @@ function reload(priorServer){
 										end_dt INT,
 										json JSONB
 										);
-										CREATE INDEX idx_gin_${c.table} ON ${c.table} USING gin (json jsonb_path_ops);
+										CREATE INDEX IF NOT EXISTS idx_gin_${c.table} ON ${c.table} USING gin (json jsonb_path_ops);
 									`)
 							))
 						.then(()=>ctx)
@@ -53,23 +73,26 @@ function reload(priorServer){
 				.then(ctx=>{//Apply routes
 						const app = express()
 						const auth = authFromConfig(ctx)
+						app.use(resLocals(()=>parseInt(Date.now()/1000),"dt"))
+
+						app.get("/log",(req,res)=>{console.log("/log "+res.locals.dt);res.status(200).json("Ok")})
 						ctx.entities.forEach(e=>{
-								app.use(resLocals(()=>parseInt(Date.now()/1000),"dt"))
 								app.get ("/schema"+e.route, auth, expressSchema(e))
 								app.get ("/list"+e.route,auth, expressListEntity(e))
 								app.post("/new"+e.route, auth, bodyParser,expressNewEntity(e))
 								app.get ("/get"+e.route+"/:eid", auth, expressGetEntity(e))
 								app.post("/set"+e.route+"/:eid", auth, bodyParser,expressSetEntity(e))
 								app.set('json spaces',2)
-								app.use(errorHandler)
 							})
 						app.get("/types", auth, expressTypes(ctx))
+						app.use(errorHandler)
 
 						//Shenanigans
 						const priorOrNone=priorServer||{close:function(f){f()}};
-						res&&res.send(200).json("New config loaded. Restarting webserver...")
+						res&&res.status(200).json("New config loaded. Restarting webserver...")
 						priorOrNone.close(function(){
-								const newServer=app.listen(8080,()=>console.log("New server started"))
+								console.log("Ready to start webserver")
+								const newServer=app.listen(ctx.webserver.port,()=>console.log("New server started on port "+ctx.webserver.port))
 								app.get("/reload",auth, reload(newServer))
 							})
 					})
@@ -80,14 +103,31 @@ function reload(priorServer){
 function validateConfig(config){
 		return {
 				errors:[
-						msgIfArr("Some config entries have conflicting database names: ",
+						//database
+						!config.db && "Config missing 'db'",
+						/*
+						 config.db && !config.db.user && "Config property 'db.user' is missing",
+						 config.db && !config.db.password && "Config property 'db.password' is missing",
+						 config.db && !config.db.database && "Config property 'db.database' is missing",
+						 config.db && !config.db.host && "Config property 'db.host' is missing",
+						 config.db && !config.db.port && "Config property 'db.port' is missing",
+						 */
+						//webserver
+						!config.webserver && "Config missing 'webserver'",
+						config.webserver && !config.webserver.port && "Config missing 'webserver.port'",
+						//entities
+						msgIfArr("Some entities have conflicting database names: ",
 								config.entities.map(c=>c.table).filter(not(unique))
 							),
-						msgIfArr("Some config entries have conflicting database names: ",
+						msgIfArr("Some entities have conflicting route names: ",
 								config.entities.map(c=>c.route).filter(not(unique))
 							)
+
 					].filter(truthy),
-				warnings:[]
+				warnings:[
+						(!config.entities || !config.entities.length) && "No entities were configured",
+
+					]
 			}
 	}
 
@@ -150,7 +190,10 @@ function expressSetEntity(config){
 
 function authFromConfig(config){
 		if(!config.authenticators){
-				return function(req,res,next){next()}
+				return function(req,res,next){
+						console.warn("No authentication")
+						next()
+					}
 			}
 		//TODO
 		return function(req,res,next){
@@ -160,10 +203,11 @@ function authFromConfig(config){
 
 function resLocals(f,name){
 		return function(req,res,next){
-			var val=f(res.locals)
-			if(!name){return val}
-			res.locals[name]=val
-		}
+				var val=f(res.locals)
+				if(!name){return val}
+				res.locals[name]=val
+				next()
+			}
 	}
 
 function dbName(str){
@@ -176,11 +220,13 @@ function dbName(str){
 			);
 	}
 function routeName(str){
-		("/"+str)
-		.replace(/[^\w\/]+(-+[^\w\/]*)*/g,"-") //Non-word, non-slash runs are replaced with a dash
-		.replace(/\/\/+/g,"/")//No consecutive slashes
-		.replace(/\/$/g,"")//No trailing slash
-		.toLowerCase()
+		return (
+				("/"+str)
+				.replace(/[^\w\/]+(-+[^\w\/]*)*/g,"-") //Non-word, non-slash runs are replaced with a dash
+				.replace(/\/\/+/g,"/")//No consecutive slashes
+				.replace(/\/$/g,"")//No trailing slash
+				.toLowerCase()
+			);
 	}
 function msgIfArr(msg,arr,delim){return arr.length && msg+arr.join(delim||", ")}
 function errorHandler (err, req, res, next) {
@@ -192,6 +238,8 @@ function errorHandler (err, req, res, next) {
 				trace:(config.env=='dev' && err.stack ? err.stack.split("\n") : undefined)
 			})
 	}
+
+
 /*
 function rowsElse(fnOrStatus,msg){
 		return function fnRowsElse(result){
