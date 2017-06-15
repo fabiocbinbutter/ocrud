@@ -10,6 +10,7 @@ const {	not,unique,truthy,peek} = require('./fabios-functions.js')
 const sqlReservedWords=JSON.parse(fs.readFileSync('./sql-reserved-words.json'))
 const jsonschema = require('jsonschema').validate
 
+//const manager=express()
 
 
 reload()(0,0,console.error)
@@ -54,25 +55,13 @@ function reload(priorServer){
 						db:new pg.Pool(config.db)
 					})))
 				.then(ctx=>//Create db tables
-						Promise.all(ctx.entities.map(c=>
-								ctx.db.query(`CREATE TABLE IF NOT EXISTS ${c.table} (
-										id SERIAL PRIMARY KEY,
-										eid INT,
-										user_id INT NOT NULL,
-										edit_dt INT NOT NULL,
-										next_dt INT,
-										start_dt INT,
-										end_dt INT,
-										json JSONB
-										);
-										CREATE INDEX IF NOT EXISTS idx_gin_${c.table} ON ${c.table} USING gin (json jsonb_path_ops);
-									`)
-							))
+						Promise.all(ctx.entities.map(dbCreateTable(ctx)))
 						.then(()=>ctx)
 					)
 				.then(ctx=>{//Apply routes
 						const app = express()
 						const auth = authFromConfig(ctx)
+						app.use(express.static("./static"))
 						app.use(resLocals(()=>parseInt(Date.now()/1000),"dt"))
 
 						app.get("/log",(req,res)=>{console.log("/log "+res.locals.dt);res.status(200).json("Ok")})
@@ -146,11 +135,11 @@ function expressSchema(ent){
 function expressListEntity(ent){
 		return function(req,res,next){
 				db.query(`
-						SELECT state.eid,state.json
-						FROM (SELECT MAX(id) as id FROM ${ent.table} GROUP BY eid LIMIT 10) as current
-				 		LEFT JOIN ${ent.table} as state on state.id=current.id
+						SELECT id,json
+						FROM ${ent.table}_curr
+						LIMIT 10
 					`)
-				.then(result=>res.status(200).json(objByOf(result.rows,"eid","json")))
+				.then(result=>res.status(200).json(objByOf(result.rows,"id","json")))
 				.catch(next)
 			}
 	}
@@ -164,29 +153,75 @@ function expressNewEntity(ent){
 							}
 					}
 				db.query(`
-						INSERT INTO ${ent.table}
-						(eid,	user_id,	edit_dt,	next_dt,	start_dt,	next_dt,	json) values (
-						(SELECT COALESCE(MAX(eid),0)+1 FROM ${ent.table}),
-						 		0,			$1,
-														NULL,		NULL,		NULL,		$2)
-						RETURNING eid
-						`,[					res.locals.dt,									JSON.stringify(req.body)]
+						DECLARE new_entity_id bigint;
+						BEGIN TRANSACTION;
+						INSERT INTO ${ent.table}_curr
+							(json) values ($1)
+							RETURNING id INTO new_entity_id;
+						INSERT INTO ${ent.table}_hist
+							(eid::int,		user_id,	prev_dt,	edit_dt,	start_dt,	end_dt,		json) values
+							(new_entity_id,	NULL,		NULL,		$2,			NULL,		NULL,		$1);
+						SELECT new_entity_id as eid;
+						COMMIT;
+						`,[JSON.stringify(req.body),res.locals.dt]
 					)
+				.then(rowsElse(500,"Unknown error inserting into the database"))
 				.then(result=>res.redirect(303,"/get"+ent.route+"/"+result.rows[0].eid))
 				.catch(next)
 			}
 	}
 
-function expressGetEntity(config){
+function expressGetEntity(ent){
 		return function(req,res,next){
-				db.query
+				db.query(`
+						SELECT json FROM ${ent.table}_curr WHERE id=$1
+					`,[req.params.eid])
+				.then(rowsElse(404,"No entity with the requested id found."))
+				.catch(next)
 			}
 	}
 function expressSetEntity(config){
 		return function(req,res,next){
-
+				db.query(`
+						DECLARE new_entity_id bigint;
+						BEGIN TRANSACTION;
+						UPDATE ${ent.table}_curr
+							SET json = $2
+							WHERE id = $1;
+						INSERT INTO ${ent.table}_hist
+							(eid::int,	user_id,	prev_dt,	edit_dt,	start_dt,	end_dt,		json) values
+							($1,		NULL,		NULL,		$3,			NULL,		NULL,		$1);
+						COMMIT;
+					`,[req.params.eid, req.body, res.locals.dt])
+				.then(rowsElse(404,"No entity with the requested id found."))
+				.catch(next)
 			}
 	}
+
+function dbCreateTable(context){
+		return function(entity){
+				return context.db.query(`
+						BEGIN TRANSACTOIN;
+						CREATE TABLE IF NOT EXISTS ${entity.table}_curr (
+							id SERIAL PRIMARY KEY,
+							json JSONB
+							);
+						CREATE TABLE IF NOT EXISTS ${entity.table}_hist (
+							id BIGSERIAL PRIMARY KEY,
+							eid INT,
+							user_id INT NOT NULL,
+							prev_dt INT NOT NULL,
+							edit_dt INT NOT NULL,
+							start_dt INT,
+							end_dt INT,
+							json JSONB
+							);
+						CREATE INDEX IF NOT EXISTS idx_gin_${entity.table} ON ${entity.table}_curr USING gin (json jsonb_path_ops);
+						COMMIT;
+					`)
+			}
+	}
+
 
 function authFromConfig(config){
 		if(!config.authenticators){
@@ -240,7 +275,7 @@ function errorHandler (err, req, res, next) {
 	}
 
 
-/*
+
 function rowsElse(fnOrStatus,msg){
 		return function fnRowsElse(result){
 				if(result && result.rows && result.rows.length){
@@ -254,4 +289,3 @@ function rowsElse(fnOrStatus,msg){
 					}
 			}
 	}
-*/

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Build a place page</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Foundation CSS framework (Bootstrap and jQueryUI also supported) -->
+<link rel='stylesheet' href='//cdn.jsdelivr.net/foundation/5.0.2/css/foundation.min.css'>
+<!-- Font Awesome icons (Bootstrap, Foundation, and jQueryUI also supported) -->
+<link rel='stylesheet' href='//cdnjs.cloudflare.com/ajax/libs/font-awesome/4.0.3/css/font-awesome.css'>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/json-editor/0.7.28/jsoneditor.min.js" integrity="sha256-51+oMmpgSgS4jV5/DcGKnDHIOL6Jeie2i7ka6sPQVro=" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js" integrity="sha256-hwg4gsxgFZhOsEEamdOYGBf13FyQuiTwlAQgxVSNgt4=" crossorigin="anonymous"></script>
+<script>
+	function acc(el){
+		$(el.target+">div").hide();
+		$(el.target+">"+el.getAttribute('href')).show();
+		return false;
+	}
+	function qs(k){return document.location.search.slice(1).split("&").filter(function(p){return p.indexOf(encodeURIComponent(k)+"=")==0}).map(function(p){return decodeURIComponent(p.split("=").slice(1).join("="))})[0]}
+	var entityMap = {
+			'&': '&amp;',
+			'<': '&lt;',
+			'>': '&gt;',
+			'"': '&quot;',
+			"'": '&#39;',
+			'/': '&#x2F;',
+			'`': '&#x60;',
+			'=': '&#x3D;'
+		};
+	function htmlSafe (string) {
+			return String(string).replace(/[&<>"'`=\/]/g, function (s) {
+					return entityMap[s];
+				});
+		}
+</script>
+<style>
+	.d-n{style:display:none}
+</style>
+</head>
+<body>
+	<div id="notification" style="position:fixed;display:none;background-color:#ED9;color:#440;top:20px;left:25vw;right:25vw;padding:2em;"></div>
+	<div class="d-n">
+		<select id="picker"><option value=''>Pick an entity type</option></select>
+	</div>
+	<div id="accordion">
+		<a href="#built" target="#accordion" onclick="acc(this)">
+			<h2>List</h2>
+		</a>
+		<div id="list" class="d-n">
+			todo...<BR />
+			<table id="list-table">
+			<thead><tr><th>Actions</th><th>ID</th><th>Description</th></tr></thead>
+			<tbody id="list-tbody"></tody>
+			</table>
+		</div>
+		<a href="#build" target="#accordion" onclick="acc(this)">
+			<h2>Edit</h2>
+		</a>
+		<div id="build">
+			<form id="form">
+				<div id="editor"></div>
+				<div id='indicator'></div>
+				<input type="submit" value="Build" />
+			</form>
+		</div>
+	</div>
+</body>
+<script>
+JSONEditor.defaults.theme = 'foundation5';
+JSONEditor.defaults.iconlib = 'fontawesome4';
+</script>
+<script>
+var getTypes=$.getJSON("/types")
+initEditor()
+$(window).on('hashchange', initEditor)
+
+$(document).ready(function(){
+		getTypes.then(types=>types && types.length && $('#picker')
+				.append(types.map(from({route:"value",name:"label"})).map(option).join(''))
+				.on("change",initEditor)
+				.parent().show()
+			)
+		//TODO: .catch(...)
+	})
+
+
+
+
+function initEditor(arg){
+		var route;
+		if(arg){
+				if (arg.target && arg.target.value){ //Input change event
+						route = arg.target.value;
+					} else
+				if (arg.target && arg.target.location){//hashchange event
+						route = arg.target.location.hash.slice(1).split('&')[0]
+					}
+			} else {	route = window.location.hash.slice(1).split('&')[0]}
+		if(!route || route[0]!="/"){return}
+
+		var getSchema=$.getJSON("/schema"+route)
+		getSchema.then((schema)=>{
+				var editor=new JSONEditor($("#editor")[0],{
+						schema:schema
+					});
+				$('#form').on("submit",function(evt){
+						evt.preventDefault();
+						$('#indicator').hide();
+						var err=editor.validate();
+						if(err.length){
+								$("#indicator").text(JSON.stringify(err)).show();
+								return;
+							}
+						console.warn("TODO")
+						/*TODO
+						$.post({
+								url:"/build",
+								data:JSON.stringify(editor.getValue()),
+								contentType: "application/json"
+							})
+						.then((res)=>$("#notification").text(res).show().delay(5000).fadeOut(2000))
+						*/
+					})
+			})
+	}
+
+	function from(mapper){
+			return function(obj){
+					let k=0,v=1
+					return (Object.entries(obj)
+							.filter(kv=>mapper[kv[k]])
+							.map(kv=>[mapper[kv[k]],kv[v]])
+							.reduce((accum,x,i)=>{accum[x[0]]=accum[x[1]];return accum;},{})
+						);
+				}
+		}
+
+	function option(obj){
+			return "<option value='"+htmlSafe(obj.value)+"'>"+htmlSafe(obj.label)+"</option>"
+		}
+</script>
+</html>
