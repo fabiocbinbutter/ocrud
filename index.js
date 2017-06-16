@@ -6,10 +6,10 @@ const hanson = require('hanson')
 const express = require('express')
 const bodyParser = require('body-parser')
 const pg=require('pg')
-const {	not,unique,truthy,peek} = require('./fabios-functions.js')
+const {	not,unique,transpose,truthy,peek} = require('./fabios-functions.js')
 const sqlReservedWords=JSON.parse(fs.readFileSync('./sql-reserved-words.json'))
 const jsonschema = require('jsonschema').validate
-
+const jsonpath = require('jsonpath')
 //const manager=express()
 
 
@@ -51,8 +51,12 @@ function reload(priorServer){
 								throw "Server configuration errors:\n> "+config.errors.join("\n> ")
 							} else { return config}
 					})
-				.then(extend(config=>({
+				.then(extend(config=>({ //Post-validation transformations
 						db:new pg.Pool(config.db)
+						/* Can I "precompile" validation functions?
+						entities:extend(config.entities,entity=>({
+								validator:jsonschema(entity.schema)
+							})*/
 					})))
 				.then(ctx=>//Create db tables
 						Promise.all(ctx.entities.map(dbCreateTable(ctx)))
@@ -66,15 +70,15 @@ function reload(priorServer){
 
 						app.get("/log",(req,res)=>{console.log("/log "+res.locals.dt);res.status(200).json("Ok")})
 						ctx.entities.forEach(e=>{
-								app.get ("/schema"+e.route, auth, expressSchema(e))
-								app.get ("/list"+e.route,auth, expressListEntity(e))
-								app.post("/new"+e.route, auth, bodyParser,expressNewEntity(e))
-								app.get ("/get"+e.route+"/:eid", auth, expressGetEntity(e))
-								app.post("/set"+e.route+"/:eid", auth, bodyParser,expressSetEntity(e))
+								app.get ("/schema"+e.route, auth, expressSchema(ctx,e))
+								app.get ("/list"+e.route,auth, expressListEntity(ctx,e))
+								app.post("/new"+e.route, auth, bodyParser,expressNewEntity(ctx,e))
+								app.get ("/get"+e.route+"/:eid", auth, expressGetEntity(ctx,e))
+								app.post("/set"+e.route+"/:eid", auth, bodyParser,expressSetEntity(ctx,e))
 								app.set('json spaces',2)
 							})
 						app.get("/types", auth, expressTypes(ctx))
-						app.use(errorHandler)
+						app.use(errorHandler(ctx))
 
 						//Shenanigans
 						const priorOrNone=priorServer||{close:function(f){f()}};
@@ -126,24 +130,38 @@ function expressTypes(config){
 			}
 	}
 
-function expressSchema(ent){
+function expressSchema(ctx,ent){
 		return function(req,res,next){
 				res.status(200).json(ent.schema||{})
 			}
 	}
 
-function expressListEntity(ent){
+function expressListEntity(ctx,ent){
 		return function(req,res,next){
-				db.query(`
+			ctx.db.query(`
 						SELECT id,json
 						FROM ${ent.table}_curr
 						LIMIT 10
 					`)
-				.then(result=>res.status(200).json(objByOf(result.rows,"id","json")))
+				.then(result=>{
+						const cols =
+								Array.isArray(ent.listColumns) ? ent.listColumns
+								: typeof ent.listColumns == 'object' ? [ent.listColumns]
+								: typeof ent.listColumns == 'string' ? [{headerText:"", selector:ent.listColumns}]
+								: [{headerText:"JSON",selector:"$"}]
+						return res.status(200).json({
+								headers:["id"].concat(cols.map(col=>col.headerText)),
+								rows:transpose(
+										[result.rows.map(r=>r.id)].concat(
+										cols.map(col=>jsonpath.query(result.rows,col.selector)))
+									)
+							})
+					})
 				.catch(next)
 			}
 	}
-function expressNewEntity(ent){
+
+function expressNewEntity(ctx,ent){
 		return function(req,res,next){
 				var valid=jsonSchema(req.body,ent.schema);
 				if(valid.errors && valid.errors.length){
@@ -152,7 +170,7 @@ function expressNewEntity(ent){
 								message:"JSON did not match pattern required for this type of entity.\n "+valid.errors.join("\n")
 							}
 					}
-				db.query(`
+				ctx.db.query(`
 						DECLARE new_entity_id bigint;
 						BEGIN TRANSACTION;
 						INSERT INTO ${ent.table}_curr
@@ -171,18 +189,18 @@ function expressNewEntity(ent){
 			}
 	}
 
-function expressGetEntity(ent){
+function expressGetEntity(ctx,ent){
 		return function(req,res,next){
-				db.query(`
+				ctx.db.query(`
 						SELECT json FROM ${ent.table}_curr WHERE id=$1
 					`,[req.params.eid])
 				.then(rowsElse(404,"No entity with the requested id found."))
 				.catch(next)
 			}
 	}
-function expressSetEntity(config){
+function expressSetEntity(ctx,ent){
 		return function(req,res,next){
-				db.query(`
+				ctx.db.query(`
 						DECLARE new_entity_id bigint;
 						BEGIN TRANSACTION;
 						UPDATE ${ent.table}_curr
@@ -198,15 +216,15 @@ function expressSetEntity(config){
 			}
 	}
 
-function dbCreateTable(context){
-		return function(entity){
-				return context.db.query(`
-						BEGIN TRANSACTOIN;
-						CREATE TABLE IF NOT EXISTS ${entity.table}_curr (
+function dbCreateTable(ctx){
+		return function(ent){
+				return ctx.db.query(`
+						BEGIN TRANSACTION;
+						CREATE TABLE IF NOT EXISTS ${ent.table}_curr (
 							id SERIAL PRIMARY KEY,
 							json JSONB
 							);
-						CREATE TABLE IF NOT EXISTS ${entity.table}_hist (
+						CREATE TABLE IF NOT EXISTS ${ent.table}_hist (
 							id BIGSERIAL PRIMARY KEY,
 							eid INT,
 							user_id INT NOT NULL,
@@ -216,7 +234,7 @@ function dbCreateTable(context){
 							end_dt INT,
 							json JSONB
 							);
-						CREATE INDEX IF NOT EXISTS idx_gin_${entity.table} ON ${entity.table}_curr USING gin (json jsonb_path_ops);
+						CREATE INDEX IF NOT EXISTS idx_gin_${ent.table} ON ${ent.table}_curr USING gin (json jsonb_path_ops);
 						COMMIT;
 					`)
 			}
@@ -264,14 +282,16 @@ function routeName(str){
 			);
 	}
 function msgIfArr(msg,arr,delim){return arr.length && msg+arr.join(delim||", ")}
-function errorHandler (err, req, res, next) {
-		if(!err.status /*&& !(err.message && err.message.status)*/){
-				console.error("Internal error: ",err)
+function errorHandler (config){
+		return function(err, req, res, next) {
+				if(!err.status /*&& !(err.message && err.message.status)*/){
+						console.error("Internal error: ",err)
+					}
+				res.status(err.status || /*(err.message && err.message.status) ||*/ 500).json({
+						error: err.message || err,
+						trace:(config.env=='dev' && err.stack ? err.stack.split("\n") : undefined)
+					})
 			}
-		res.status(err.status || /*(err.message && err.message.status) ||*/ 500).json({
-				error: err.message || err,
-				trace:(config.env=='dev' && err.stack ? err.stack.split("\n") : undefined)
-			})
 	}
 
 

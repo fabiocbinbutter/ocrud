@@ -48,6 +48,9 @@ module.exports={
 				return Object.assign(baseObj, (typeof o[k] == "object" ? o[k] : {value:o[k]}))
 			})
 	}
+,transpose: function transpose(a) {
+		return a[0].map(function (_, c) { return a.map(function (r) { return r[c]; }); });
+	}
 ,caught: function caught(fn){
 		return function(req,res,next){
 				try{

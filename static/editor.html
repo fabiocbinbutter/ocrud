@@ -3,19 +3,102 @@
 <head>
 <title>Build a place page</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js" integrity="sha256-hwg4gsxgFZhOsEEamdOYGBf13FyQuiTwlAQgxVSNgt4=" crossorigin="anonymous"></script>
+<script>
+var fetchTypes=$.getJSON("/types")
+</script>
 <!-- Foundation CSS framework (Bootstrap and jQueryUI also supported) -->
 <link rel='stylesheet' href='//cdn.jsdelivr.net/foundation/5.0.2/css/foundation.min.css'>
 <!-- Font Awesome icons (Bootstrap, Foundation, and jQueryUI also supported) -->
 <link rel='stylesheet' href='//cdnjs.cloudflare.com/ajax/libs/font-awesome/4.0.3/css/font-awesome.css'>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/json-editor/0.7.28/jsoneditor.min.js" integrity="sha256-51+oMmpgSgS4jV5/DcGKnDHIOL6Jeie2i7ka6sPQVro=" crossorigin="anonymous"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js" integrity="sha256-hwg4gsxgFZhOsEEamdOYGBf13FyQuiTwlAQgxVSNgt4=" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dot/1.1.2/doT.min.js" integrity="sha256-XEpvFiod8Oc0Md8Bfv4/D5joMS7TEhzg6xKvW50P8Sc=" crossorigin="anonymous"></script>
+<style>
+	/*Inline*/
+	.d-n{style:display:none}
+	/*Layout*/
+	.d-fa,.d-fb {display:flex;align-items:center;}
+	.d-fa{justify-content: space-around;}
+	.d-fb{justify-content: space-between;}
+	.d-n {display:none;}
+	.d-ib{display:inline-block}
+	.mv-1{margin-top:1em;margin-bottom:1em}
+	.w-f,form {width:100%}
+	body{margin:0 0 3em 0; width:100%; min-width:320px}
+	/*Style*/
+	.err {color:#808;border:1px solid #808;background-color: #FDD;}
+	.warn {color:#A80;border:1px solid #A80;background-color: #FFD;}
+	.ok {color:#080;border:1px solid #080;background-color: #DFD;}
+	.info {color:#008;border:1px solid #008;background-color: #DDF;}
+	.pending {color:#666;background-color: #DDD;}
+	.round{border-radius:0.5em;padding:0.5em;}
+
+	#notification{position:fixed;top:20px;left:25vw;right:25vw;}
+</style>
+</head>
+<body>
+	<div id="notification" class="d-n round warn"></div>
+	<div class="d-n">
+		<select id="picker"><option value=''>Pick an entity type</option></select>
+	</div>
+	<div id="accordion">
+		<a href="#list" target="#accordion" onclick="return acc(this)">
+			<h2>List</h2>
+		</a>
+		<div id="list"></div>
+		<script id="list-template" type="text/x-dot-template">
+			<table>
+			<thead>
+			<tr>
+				<<*x.headers:header>><th><<:header>></th><<*>>
+				<th>Actions</th>
+			</tr>
+			</thead>
+			<tbody>
+			<<*x.rows:row>><tr>
+				<<*row:val>><td><<:val>><</td><<*>>
+				<td>Edit <<:row[0]>></td>
+			</tr><<*>>
+			</tbody>
+			</table>
+		</script>
+		<a href="#build" target="#accordion" onclick="return acc(this)">
+			<h2>Edit</h2>
+		</a>
+		<div id="build">
+			<form id="form">
+				<div id="edit"></div>
+				<div id='indicator'></div>
+				<input type="submit" value="Build" />
+			</form>
+		</div>
+	</div>
+</body>
 <script>
+//JSON Editor Settings
+JSONEditor.defaults.theme = 'foundation5';
+JSONEditor.defaults.iconlib = 'fontawesome4';
+
+//doT Settings
+doT.templateSettings = {
+		evaluate:    /\<\<\!([\s\S]+?)\>\>/g,
+		interpolate: /\<\<\:([\s\S]+?)\>\>/g,
+		encode:      /\<\<&([\s\S]+?)\>\>/g,
+		use:         /\<\<#([\s\S]+?)\>\>/g,
+		define:      /\<\<##\s*([\w\.$]+)\s*(\:|=)([\s\S]+?)#\>\>/g,
+		conditional: /\<\<\?(\?)?\s*([\s\S]*?)\s*\>\>/g,
+		iterate:     /\<\<\*\s*(?:\>\>|([\s\S]+?)\s*\:\s*([\w$]+)\s*(?:\:\s*([\w$]+))?\s*\>\>)/g,
+		varname: 'x',
+		strip: false,
+		append: true,
+		selfcontained: false
+	};
+
 	function acc(el){
-		$(el.target+">div").hide();
-		$(el.target+">"+el.getAttribute('href')).show();
-		return false;
-	}
-	function qs(k){return document.location.search.slice(1).split("&").filter(function(p){return p.indexOf(encodeURIComponent(k)+"=")==0}).map(function(p){return decodeURIComponent(p.split("=").slice(1).join("="))})[0]}
+			$(el.target+">div").hide();
+			$(el.target+">"+el.getAttribute('href')).show();
+			return false;
+		}
 	var entityMap = {
 			'&': '&amp;',
 			'<': '&lt;',
@@ -32,51 +115,28 @@
 				});
 		}
 </script>
-<style>
-	.d-n{style:display:none}
-</style>
-</head>
-<body>
-	<div id="notification" style="position:fixed;display:none;background-color:#ED9;color:#440;top:20px;left:25vw;right:25vw;padding:2em;"></div>
-	<div class="d-n">
-		<select id="picker"><option value=''>Pick an entity type</option></select>
-	</div>
-	<div id="accordion">
-		<a href="#built" target="#accordion" onclick="acc(this)">
-			<h2>List</h2>
-		</a>
-		<div id="list" class="d-n">
-			todo...<BR />
-			<table id="list-table">
-			<thead><tr><th>Actions</th><th>ID</th><th>Description</th></tr></thead>
-			<tbody id="list-tbody"></tody>
-			</table>
-		</div>
-		<a href="#build" target="#accordion" onclick="acc(this)">
-			<h2>Edit</h2>
-		</a>
-		<div id="build">
-			<form id="form">
-				<div id="editor"></div>
-				<div id='indicator'></div>
-				<input type="submit" value="Build" />
-			</form>
-		</div>
-	</div>
-</body>
 <script>
-JSONEditor.defaults.theme = 'foundation5';
-JSONEditor.defaults.iconlib = 'fontawesome4';
-</script>
-<script>
-var getTypes=$.getJSON("/types")
+var qh={
+		get:function(){
+				return document.location.hash.slice(1).split("&").reduce((accum,x,i)=>{
+						var split=x.split('=');
+						var key=decodeURIComponent(split[0])
+						var val=decodeURIComponent(split.slice(1).join('='))
+						accum[key]=val;
+						return accum;
+					},{})
+			}
+	}
 initEditor()
 $(window).on('hashchange', initEditor)
+$('#picker').on("change",function(evt){document.location.hash="list="+this.value})
+
+const listTemplate = doT.template($("#list-template").text())
 
 $(document).ready(function(){
-		getTypes.then(types=>types && types.length && $('#picker')
+		fetchTypes.then(types=>types && types.length
+			 	&& $('#picker')
 				.append(types.map(from({route:"value",name:"label"})).map(option).join(''))
-				.on("change",initEditor)
 				.parent().show()
 			)
 		//TODO: .catch(...)
@@ -85,51 +145,55 @@ $(document).ready(function(){
 
 
 
-function initEditor(arg){
-		var route;
-		if(arg){
-				if (arg.target && arg.target.value){ //Input change event
-						route = arg.target.value;
-					} else
-				if (arg.target && arg.target.location){//hashchange event
-						route = arg.target.location.hash.slice(1).split('&')[0]
-					}
-			} else {	route = window.location.hash.slice(1).split('&')[0]}
-		if(!route || route[0]!="/"){return}
-
-		var getSchema=$.getJSON("/schema"+route)
-		getSchema.then((schema)=>{
-				var editor=new JSONEditor($("#editor")[0],{
-						schema:schema
-					});
-				$('#form').on("submit",function(evt){
-						evt.preventDefault();
-						$('#indicator').hide();
-						var err=editor.validate();
-						if(err.length){
-								$("#indicator").text(JSON.stringify(err)).show();
-								return;
-							}
-						console.warn("TODO")
-						/*TODO
-						$.post({
-								url:"/build",
-								data:JSON.stringify(editor.getValue()),
-								contentType: "application/json"
-							})
-						.then((res)=>$("#notification").text(res).show().delay(5000).fadeOut(2000))
-						*/
-					})
+function initEditor(){
+		var all=qh.get();
+		var update={}
+		Object.entries(all).forEach(([target,state])=>{
+				if(!state || state[0]!="/"){return ;}
+				var el=document.getElementById(target)
+				if(el && el.dataset && el.dataset.state==state){return;}
+				el.dataset.state=state
+				update[target]=state
 			})
+		if(update.list){
+				$.getJSON("/list"+update.list)
+				.then(list=>$("#list").html(listTemplate(list)))
+			}
+		if(update.edit){
+				var getSchema=$.getJSON("/schema"+update.edit)
+				getSchema.then((schema)=>{
+						var editor=new JSONEditor($("#editor").empty()[0],{
+								schema:schema
+							});
+						$('#form').on("submit",function(evt){
+								evt.preventDefault();
+								$('#indicator').hide();
+								var err=editor.validate();
+								if(err.length){
+										$("#indicator").text(JSON.stringify(err)).show();
+										return;
+									}
+								console.warn("TODO")
+								/*TODO
+								$.post({
+										url:"/build",
+										data:JSON.stringify(editor.getValue()),
+										contentType: "application/json"
+									})
+								.then((res)=>$("#notification").text(res).show().delay(5000).fadeOut(2000))
+								*/
+							})
+					})
+			}
+
 	}
 
 	function from(mapper){
 			return function(obj){
-					let k=0,v=1
 					return (Object.entries(obj)
-							.filter(kv=>mapper[kv[k]])
-							.map(kv=>[mapper[kv[k]],kv[v]])
-							.reduce((accum,x,i)=>{accum[x[0]]=accum[x[1]];return accum;},{})
+							.filter(([k,v])=>mapper[k])
+							.map(([k,v])=>[mapper[k],v])
+							.reduce((accum,[k,v],i)=>{accum[k]=v;return accum;},{})
 						);
 				}
 		}

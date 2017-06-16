@@ -13,6 +13,7 @@
     "body-parser": "^1.17.2",
     "express": "^4.15.3",
     "hanson": "^1.2.0",
+    "jsonpath": "^0.2.11",
     "jsonschema": "^1.1.1",
     "pg": "^6.2.3",
     "promisify-node": "^0.4.0"
