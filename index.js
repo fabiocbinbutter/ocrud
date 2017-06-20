@@ -69,18 +69,19 @@ function reload(priorServer){
 						app.use(resLocals(()=>parseInt(Date.now()/1000),"dt"))
 
 						app.get("/log",(req,res)=>{console.log("/log "+res.locals.dt);res.status(200).json("Ok")})
-						ctx.entities.forEach(e=>{
-								app.get ("/schema"+e.route, auth, expressSchema(ctx,e))
-								app.get ("/list"+e.route,auth, expressListEntity(ctx,e))
-								app.post("/new"+e.route, auth, bodyParser,expressNewEntity(ctx,e))
-								app.get ("/get"+e.route+"/:eid", auth, expressGetEntity(ctx,e))
-								app.post("/set"+e.route+"/:eid", auth, bodyParser,expressSetEntity(ctx,e))
-								app.set('json spaces',2)
+						ctx.entities.forEach(ent=>{
+								app.get ("/api/schema"+ent.route, auth, schemaApi(ctx,ent))
+								app.get ("/api/list"+ent.route,auth, listEntitiesApi(ctx,ent))
+								app.post("/api/new"+ent.route, auth, bodyParser,expressNewEntity(ctx,ent))
+								app.get ("/api/get"+ent.route+"/:eid", auth, expressGetEntity(ctx,ent))
+								app.post("/api/set"+ent.route+"/:eid", auth, bodyParser,expressSetEntity(ctx,ent))
 							})
-						app.get("/types", auth, expressTypes(ctx))
+						app.post("/rpc",auth,rpcExpress(ctx))
+						app.get("/api/types", auth, expressTypes(ctx))
+						app.set('json spaces',2)
 						app.use(errorHandler(ctx))
 
-						//Shenanigans
+						//Shenanigans? ... :(
 						const priorOrNone=priorServer||{close:function(f){f()}};
 						res&&res.status(200).json("New config loaded. Restarting webserver...")
 						priorOrNone.close(function(){
@@ -130,37 +131,61 @@ function expressTypes(config){
 			}
 	}
 
-function expressSchema(ctx,ent){
+function schemaApi(ctx,ent){
 		return function(req,res,next){
 				res.status(200).json(ent.schema||{})
 			}
 	}
-
-function expressListEntity(ctx,ent){
+function rpcExpress(ctx){
 		return function(req,res,next){
-			ctx.db.query(`
-						SELECT id,json
-						FROM ${ent.table}_curr
-						LIMIT 10
-					`)
-				.then(result=>{
-						const cols =
-								Array.isArray(ent.listColumns) ? ent.listColumns
-								: typeof ent.listColumns == 'object' ? [ent.listColumns]
-								: typeof ent.listColumns == 'string' ? [{headerText:"", selector:ent.listColumns}]
-								: [{headerText:"JSON",selector:"$"}]
-						return res.status(200).json({
-								headers:["id"].concat(cols.map(col=>col.headerText)),
-								rows:transpose(
-										[result.rows.map(r=>r.id)].concat(
-										cols.map(col=>jsonpath.query(result.rows,col.selector)))
-									)
-							})
+				var body=req.body||{}
+				if(typeof body.method != 'string'){res.status(400).send("RPC calls require a method string")}
+				if(!Array.isArray(body.params)){res.status(400).send("RPC calls require a params array")}
+				(body.method=="list"?listEntities():"")
+
+
+				.catch(err=>res.status(200).json({
+						result:null,
+						error:
 					})
+			}
+	}
+
+function listEntitiesApi(ctx,ent){
+		return function(req,res,next){
+				listEntities(ctx,ent)
+				.then(list=>res.status(200).json(list))
 				.catch(next)
 			}
 	}
 
+function listEntitiesRpcExpress(ctx,ent){
+		return function(req,res,next){
+				listEntitiesRpc
+			}
+	}
+
+function listEntities(ctx,ent){
+		return ctx.db.query(`
+					SELECT id,json
+					FROM ${ent.table}_curr
+					LIMIT 10
+				`)
+			.then(result=>{
+					const cols =
+							Array.isArray(ent.listColumns) ? ent.listColumns
+							: typeof ent.listColumns == 'object' ? [ent.listColumns]
+							: typeof ent.listColumns == 'string' ? [{headerText:"", selector:ent.listColumns}]
+							: [{headerText:"JSON",selector:"$"}]
+					return res.status(200).json({
+							headers:["id"].concat(cols.map(col=>col.headerText)),
+							rows:transpose(
+									[result.rows.map(r=>r.id)].concat(
+									cols.map(col=>jsonpath.query(result.rows,col.selector)))
+								)
+						})
+				})
+	}
 function expressNewEntity(ctx,ent){
 		return function(req,res,next){
 				var valid=jsonSchema(req.body,ent.schema);

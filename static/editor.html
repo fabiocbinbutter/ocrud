@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>Build a place page</title>
+<title>OCRUD Commander</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js" integrity="sha256-hwg4gsxgFZhOsEEamdOYGBf13FyQuiTwlAQgxVSNgt4=" crossorigin="anonymous"></script>
 <script>
-var fetchTypes=$.getJSON("/types")
+var fetchTypes=$.getJSON("/api/types")
 </script>
 <!-- Foundation CSS framework (Bootstrap and jQueryUI also supported) -->
 <link rel='stylesheet' href='//cdn.jsdelivr.net/foundation/5.0.2/css/foundation.min.css'>
@@ -13,39 +13,27 @@ var fetchTypes=$.getJSON("/types")
 <link rel='stylesheet' href='//cdnjs.cloudflare.com/ajax/libs/font-awesome/4.0.3/css/font-awesome.css'>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/json-editor/0.7.28/jsoneditor.min.js" integrity="sha256-51+oMmpgSgS4jV5/DcGKnDHIOL6Jeie2i7ka6sPQVro=" crossorigin="anonymous"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dot/1.1.2/doT.min.js" integrity="sha256-XEpvFiod8Oc0Md8Bfv4/D5joMS7TEhzg6xKvW50P8Sc=" crossorigin="anonymous"></script>
-<style>
-	/*Inline*/
-	.d-n{style:display:none}
-	/*Layout*/
-	.d-fa,.d-fb {display:flex;align-items:center;}
-	.d-fa{justify-content: space-around;}
-	.d-fb{justify-content: space-between;}
-	.d-n {display:none;}
-	.d-ib{display:inline-block}
-	.mv-1{margin-top:1em;margin-bottom:1em}
-	.w-f,form {width:100%}
-	body{margin:0 0 3em 0; width:100%; min-width:320px}
-	/*Style*/
-	.err {color:#808;border:1px solid #808;background-color: #FDD;}
-	.warn {color:#A80;border:1px solid #A80;background-color: #FFD;}
-	.ok {color:#080;border:1px solid #080;background-color: #DFD;}
-	.info {color:#008;border:1px solid #008;background-color: #DDF;}
-	.pending {color:#666;background-color: #DDD;}
-	.round{border-radius:0.5em;padding:0.5em;}
-
-	#notification{position:fixed;top:20px;left:25vw;right:25vw;}
+<link rel="stylesheet" href="/common.css">
 </style>
 </head>
 <body>
-	<div id="notification" class="d-n round warn"></div>
-	<div class="d-n">
-		<select id="picker"><option value=''>Pick an entity type</option></select>
+	<div id="flash-msg" class="d-n round"></div>
+	<div class="d-fb">
+		<div class="d-n ready picker" style="flex-grow:1">
+			<select id="picker"><option value=''>Pick an entity type</option></select>
+		</div>
+		<div class="d-n" width="3em" class="ready new">
+			<div style="margin:0 0.5em;right:0;border:1px solid #666" class="round">
+				+
+			</div>
+		</div>
 	</div>
 	<div id="accordion">
 		<a href="#list" target="#accordion" onclick="return acc(this)">
 			<h2>List</h2>
 		</a>
-		<div id="list"></div>
+		<div class="loading list"></div>
+		<div id="list" class="d-n ready list"></div>
 		<script id="list-template" type="text/x-dot-template">
 			<table>
 			<thead>
@@ -62,14 +50,14 @@ var fetchTypes=$.getJSON("/types")
 			</tbody>
 			</table>
 		</script>
-		<a href="#build" target="#accordion" onclick="return acc(this)">
+		<a href="#edit-section" target="#accordion" onclick="return acc(this)">
 			<h2>Edit</h2>
 		</a>
-		<div id="build">
-			<form id="form">
-				<div id="edit"></div>
-				<div id='indicator'></div>
-				<input type="submit" value="Build" />
+		<div id="edit-section" class="d-n ready picker">
+			<form id="edit-form">
+				<div id="editor"></div>
+				<div id='edit-indicator'></div>
+				<input type="submit" value="Go" />
 			</form>
 		</div>
 	</div>
@@ -116,76 +104,95 @@ doT.templateSettings = {
 		}
 </script>
 <script>
-var qh={
-		get:function(){
-				return document.location.hash.slice(1).split("&").reduce((accum,x,i)=>{
-						var split=x.split('=');
-						var key=decodeURIComponent(split[0])
-						var val=decodeURIComponent(split.slice(1).join('='))
-						accum[key]=val;
-						return accum;
-					},{})
-			}
+var globalEditor={validate:function(){return ["Editor not yet loaded"]}};
+var viewState={
+		"new":{},
+		picker:{},
+		list:{},
+		editor:{}
 	}
-initEditor()
-$(window).on('hashchange', initEditor)
-$('#picker').on("change",function(evt){document.location.hash="list="+this.value})
+
+update();
+$(window).on('hashchange', update)
+$('#picker').on("change",function(evt){document.location.hash="/list"+this.value})
 
 const listTemplate = doT.template($("#list-template").text())
 
 $(document).ready(function(){
 		fetchTypes.then(types=>types && types.length
-			 	&& $('#picker')
+				&& $('#picker')
 				.append(types.map(from({route:"value",name:"label"})).map(option).join(''))
 				.parent().show()
 			)
-		//TODO: .catch(...)
+			.catch(msg)
+
+		$('#edit-form').on("submit",function(evt){
+				evt.preventDefault();
+				$('#edit-indicator').hide();
+				var err=globalEditor.validate();
+				if(err.length){
+						msg({tgt:$("#edit-indicator"),st:"err"}(err.join(""))
+						return;
+					}
+				$.post({
+						url: viewState.editor.action=="new"
+								? "/api/new/"+viewState.editor.class
+								: "/api/set/"+viewState.editor.class+"/"
+						data:JSON.stringify(editor.getValue()),
+						contentType: "application/json"
+					})
+				.then((res)=>$("#notification").text(res).show().delay(5000).fadeOut(2000))
+				*/
 	})
 
 
 
 
-function initEditor(){
-		var all=qh.get();
-		var update={}
-		Object.entries(all).forEach(([target,state])=>{
-				if(!state || state[0]!="/"){return ;}
-				var el=document.getElementById(target)
-				if(el && el.dataset && el.dataset.state==state){return;}
-				el.dataset.state=state
-				update[target]=state
-			})
-		if(update.list){
-				$.getJSON("/list"+update.list)
-				.then(list=>$("#list").html(listTemplate(list)))
+function update(){
+		if(document.location.hash[1]!="/"){return;}
+		const r=document.location.hash.split("&")[0].split("/");
+		const route={action:r[1], class:r[2], id:r[3]};
+		var pList;
+
+		if(change("picker","class")){
+				$("#picker").val(route.class)
 			}
-		if(update.edit){
-				var getSchema=$.getJSON("/schema"+update.edit)
-				getSchema.then((schema)=>{
-						var editor=new JSONEditor($("#editor").empty()[0],{
-								schema:schema
-							});
-						$('#form').on("submit",function(evt){
-								evt.preventDefault();
-								$('#indicator').hide();
-								var err=editor.validate();
-								if(err.length){
-										$("#indicator").text(JSON.stringify(err)).show();
-										return;
-									}
-								console.warn("TODO")
-								/*TODO
-								$.post({
-										url:"/build",
-										data:JSON.stringify(editor.getValue()),
-										contentType: "application/json"
-									})
-								.then((res)=>$("#notification").text(res).show().delay(5000).fadeOut(2000))
-								*/
-							})
-					})
+		if(change("new","class"){
+				if(route.class){$(".ready.new").show()}
 			}
 
+		if(change("list","class"){
+				pList=$.getJSON("/list/"+route.class)
+				pList.then(list=>$("#list").html(listTemplate(list)))
+			}
+
+		if(change("editor","class")){
+				$.getJSON("/schema"+route.class)
+				.then(schema => {
+						globalEditor.destroy();
+						globalEditor=new JSONEditor($("#editor").empty()[0],{schema:schema});
+						change("editor",["action","id"])
+					})
+			}else
+		if (change("editor",["action","id"])){
+
+			}
+
+		if(update.edit){
+				var getSchema=
+				getSchema
+			}
+			return;
+			function change(selector,routeParts){
+					if(!routeParts.forEach){routeParts=[routeParts]}
+					var isChanged=routeParts.some(part=>(viewState[selector]||{})[part]!=route[part])
+					if( isChanged ){
+							routeParts.forEach(part=>$(selector).data(part,route[part]))
+							$(".ready."+section).hide()
+							$(".loading."+section).hide()
+						}
+					return isChanged;
+				}
 	}
 
 	function from(mapper){
@@ -201,5 +208,59 @@ function initEditor(){
 	function option(obj){
 			return "<option value='"+htmlSafe(obj.value)+"'>"+htmlSafe(obj.label)+"</option>"
 		}
+
+	function msg(x){
+			if(!x){ return curryMsg({}) }
+			if(x.tgt===undefined && x.st===undefined && x.msg===undefined){
+					curryMsg({})(x)
+					return x
+				}
+			return curryMsg(x)
+		}
+	function curryMsg(opts){
+			var defaultStatus="none"
+			var defaultTarget=$("#flash-msg")
+			return function(msg){
+					var stat=opts.st
+							|| (msg instanceof Error || msg.error || msg.status>=400) && "err"
+							|| defaultStatus;
+					var cont=opts.tgt || defaultTarget;
+					cont.html(
+							'<div class="msg-status round mv-1">'
+							+'<div class="d-fb">'
+							+'	<div>'
+							+'		<i class="msg-icon fa"></i>'
+							+'		<span class="msg-text">'
+							+'	</div>'
+							+'	<div>'
+							+'		<i class="fa fa-times msg-close"></i>'
+							+'	</div>'
+							+'</div>'
+							+'</div>'
+						)
+					cont.find(".msg-text").text(opts.msg
+						 	|| (!msg && " ")
+							|| msg.message
+							|| msg.error
+							|| (msg.responseJSON && (msg.responseJSON.message || msg.responseJSON.error))
+							|| msg.statusText
+							|| msg
+						)
+
+					cont.find(".msg-status").addClass(stat)
+					cont.find(".msg-icon").addClass({
+							"ok":"fa-check-circle",
+							"err":"fa-times-circle",
+							"warn":"fa-exclamation-triangle",
+							"info":"fa-info-circle",
+							"pending":"fa-spinner fa-pulse fa-fw"
+						}[stat])
+					cont.find(".msg-close").click(function(evt){
+							cont.empty().hide()
+						})
+					cont.show()
+				}
+		}
+
 </script>
 </html>

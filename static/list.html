@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Build a place page</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js" integrity="sha256-hwg4gsxgFZhOsEEamdOYGBf13FyQuiTwlAQgxVSNgt4=" crossorigin="anonymous"></script>
+<script>
+var initPath=document.location.hash.slice(1).split("&")[0],
+	initData=initPath && $.getJSON("/types"+initPath)
+</script>
+<link rel='stylesheet' href='//cdnjs.cloudflare.com/ajax/libs/font-awesome/4.0.3/css/font-awesome.css'>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dot/1.1.2/doT.min.js" integrity="sha256-XEpvFiod8Oc0Md8Bfv4/D5joMS7TEhzg6xKvW50P8Sc=" crossorigin="anonymous"></script>
+<link rel='stylesheet' href='/embed-common.css'>
+</head>
+<body>
+	<div id="notification" class="d-n round warn"></div>
+	<div class="d-n">
+		<select id="picker"><option value=''>Pick an entity type</option></select>
+	</div>
+	<div id="accordion">
+		<a href="#list" target="#accordion" onclick="return acc(this)">
+			<h2>List</h2>
+		</a>
+		<div id="list"></div>
+		<script id="list-template" type="text/x-dot-template">
+			<table>
+			<thead>
+			<tr>
+				<<*x.headers:header>><th><<:header>></th><<*>>
+				<th>Actions</th>
+			</tr>
+			</thead>
+			<tbody>
+			<<*x.rows:row>><tr>
+				<<*row:val>><td><<:val>><</td><<*>>
+				<td>Edit <<:row[0]>></td>
+			</tr><<*>>
+			</tbody>
+			</table>
+		</script>
+		<a href="#build" target="#accordion" onclick="return acc(this)">
+			<h2>Edit</h2>
+		</a>
+		<div id="build">
+			<form id="form">
+				<div id="edit"></div>
+				<div id='indicator'></div>
+				<input type="submit" value="Build" />
+			</form>
+		</div>
+	</div>
+</body>
+<script>
+//JSON Editor Settings
+JSONEditor.defaults.theme = 'foundation5';
+JSONEditor.defaults.iconlib = 'fontawesome4';
+
+//doT Settings
+doT.templateSettings = {
+		evaluate:    /\<\<\!([\s\S]+?)\>\>/g,
+		interpolate: /\<\<\:([\s\S]+?)\>\>/g,
+		encode:      /\<\<&([\s\S]+?)\>\>/g,
+		use:         /\<\<#([\s\S]+?)\>\>/g,
+		define:      /\<\<##\s*([\w\.$]+)\s*(\:|=)([\s\S]+?)#\>\>/g,
+		conditional: /\<\<\?(\?)?\s*([\s\S]*?)\s*\>\>/g,
+		iterate:     /\<\<\*\s*(?:\>\>|([\s\S]+?)\s*\:\s*([\w$]+)\s*(?:\:\s*([\w$]+))?\s*\>\>)/g,
+		varname: 'x',
+		strip: false,
+		append: true,
+		selfcontained: false
+	};
+
+	function acc(el){
+			$(el.target+">div").hide();
+			$(el.target+">"+el.getAttribute('href')).show();
+			return false;
+		}
+	var entityMap = {
+			'&': '&amp;',
+			'<': '&lt;',
+			'>': '&gt;',
+			'"': '&quot;',
+			"'": '&#39;',
+			'/': '&#x2F;',
+			'`': '&#x60;',
+			'=': '&#x3D;'
+		};
+	function htmlSafe (string) {
+			return String(string).replace(/[&<>"'`=\/]/g, function (s) {
+					return entityMap[s];
+				});
+		}
+</script>
+<script>
+var qh={
+		get:function(){
+				return document.location.hash.slice(1).split("&").reduce((accum,x,i)=>{
+						var split=x.split('=');
+						var key=decodeURIComponent(split[0])
+						var val=decodeURIComponent(split.slice(1).join('='))
+						accum[key]=val;
+						return accum;
+					},{})
+			}
+	}
+initEditor()
+$(window).on('hashchange', initEditor)
+$('#picker').on("change",function(evt){document.location.hash="list="+this.value})
+
+const listTemplate = doT.template($("#list-template").text())
+
+$(document).ready(function(){
+		fetchTypes.then(types=>types && types.length
+			 	&& $('#picker')
+				.append(types.map(from({route:"value",name:"label"})).map(option).join(''))
+				.parent().show()
+			)
+		//TODO: .catch(...)
+	})
+
+
+
+
+function initEditor(){
+		var all=qh.get();
+		var update={}
+		Object.entries(all).forEach(([target,state])=>{
+				if(!state || state[0]!="/"){return ;}
+				var el=document.getElementById(target)
+				if(el && el.dataset && el.dataset.state==state){return;}
+				el.dataset.state=state
+				update[target]=state
+			})
+		if(update.list){
+				$.getJSON("/list"+update.list)
+				.then(list=>$("#list").html(listTemplate(list)))
+			}
+		if(update.edit){
+				var getSchema=$.getJSON("/schema"+update.edit)
+				getSchema.then((schema)=>{
+						var editor=new JSONEditor($("#editor").empty()[0],{
+								schema:schema
+							});
+						$('#form').on("submit",function(evt){
+								evt.preventDefault();
+								$('#indicator').hide();
+								var err=editor.validate();
+								if(err.length){
+										$("#indicator").text(JSON.stringify(err)).show();
+										return;
+									}
+								console.warn("TODO")
+								/*TODO
+								$.post({
+										url:"/build",
+										data:JSON.stringify(editor.getValue()),
+										contentType: "application/json"
+									})
+								.then((res)=>$("#notification").text(res).show().delay(5000).fadeOut(2000))
+								*/
+							})
+					})
+			}
+
+	}
+
+	function from(mapper){
+			return function(obj){
+					return (Object.entries(obj)
+							.filter(([k,v])=>mapper[k])
+							.map(([k,v])=>[mapper[k],v])
+							.reduce((accum,[k,v],i)=>{accum[k]=v;return accum;},{})
+						);
+				}
+		}
+
+	function option(obj){
+			return "<option value='"+htmlSafe(obj.value)+"'>"+htmlSafe(obj.label)+"</option>"
+		}
+</script>
+</html>
