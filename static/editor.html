@@ -131,18 +131,20 @@ $(document).ready(function(){
 				$('#edit-indicator').hide();
 				var err=globalEditor.validate();
 				if(err.length){
-						msg({tgt:$("#edit-indicator"),st:"err"}(err.join(""))
+						msg({tgt:$("#edit-indicator"),st:"err"})(err.join(", "))
 						return;
 					}
 				$.post({
 						url: viewState.editor.action=="new"
 								? "/api/new/"+viewState.editor.class
-								: "/api/set/"+viewState.editor.class+"/"
+								: "/api/set/"+viewState.editor.class+"/"+viewState.editor.id
+							,
 						data:JSON.stringify(editor.getValue()),
 						contentType: "application/json"
 					})
 				.then((res)=>$("#notification").text(res).show().delay(5000).fadeOut(2000))
-				*/
+				.catch(msg)
+			})
 	})
 
 
@@ -157,17 +159,17 @@ function update(){
 		if(change("picker","class")){
 				$("#picker").val(route.class)
 			}
-		if(change("new","class"){
+		if(change("new","class")){
 				if(route.class){$(".ready.new").show()}
 			}
 
-		if(change("list","class"){
-				pList=$.getJSON("/list/"+route.class)
+		if(change("list","class")){
+				pList=$.getJSON("/api/list/"+route.class)
 				pList.then(list=>$("#list").html(listTemplate(list)))
 			}
 
 		if(change("editor","class")){
-				$.getJSON("/schema"+route.class)
+				$.getJSON("/api/schema/"+route.class)
 				.then(schema => {
 						globalEditor.destroy();
 						globalEditor=new JSONEditor($("#editor").empty()[0],{schema:schema});
@@ -178,21 +180,17 @@ function update(){
 
 			}
 
-		if(update.edit){
-				var getSchema=
-				getSchema
+		return;
+		function change(section,routeParts){
+				if(!routeParts.forEach){routeParts=[routeParts]}
+				var isChanged=routeParts.some(part=>viewState[section][part]!=route[part])
+				if( isChanged ){
+						routeParts.forEach(part=>viewState[section][part]=route[part])
+						$(".ready."+section).hide()
+						$(".loading."+section).hide()
+					}
+				return isChanged;
 			}
-			return;
-			function change(selector,routeParts){
-					if(!routeParts.forEach){routeParts=[routeParts]}
-					var isChanged=routeParts.some(part=>(viewState[selector]||{})[part]!=route[part])
-					if( isChanged ){
-							routeParts.forEach(part=>$(selector).data(part,route[part]))
-							$(".ready."+section).hide()
-							$(".loading."+section).hide()
-						}
-					return isChanged;
-				}
 	}
 
 	function from(mapper){

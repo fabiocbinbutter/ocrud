@@ -76,7 +76,7 @@ function reload(priorServer){
 								app.get ("/api/get"+ent.route+"/:eid", auth, expressGetEntity(ctx,ent))
 								app.post("/api/set"+ent.route+"/:eid", auth, bodyParser,expressSetEntity(ctx,ent))
 							})
-						app.post("/rpc",auth,rpcExpress(ctx))
+						//TODO app.post("/rpc",auth,rpcExpress(ctx))
 						app.get("/api/types", auth, expressTypes(ctx))
 						app.set('json spaces',2)
 						app.use(errorHandler(ctx))
@@ -136,6 +136,7 @@ function schemaApi(ctx,ent){
 				res.status(200).json(ent.schema||{})
 			}
 	}
+/*TODO
 function rpcExpress(ctx){
 		return function(req,res,next){
 				var body=req.body||{}
@@ -146,22 +147,23 @@ function rpcExpress(ctx){
 
 				.catch(err=>res.status(200).json({
 						result:null,
-						error:
+						error:err
 					})
-			}
-	}
-
-function listEntitiesApi(ctx,ent){
-		return function(req,res,next){
-				listEntities(ctx,ent)
-				.then(list=>res.status(200).json(list))
-				.catch(next)
 			}
 	}
 
 function listEntitiesRpcExpress(ctx,ent){
 		return function(req,res,next){
-				listEntitiesRpc
+
+			}
+	}
+
+*/
+function listEntitiesApi(ctx,ent){
+		return function(req,res,next){
+				listEntities(ctx,ent)
+				.then(list=>res.status(200).json(list))
+				.catch(next)
 			}
 	}
 
@@ -177,13 +179,13 @@ function listEntities(ctx,ent){
 							: typeof ent.listColumns == 'object' ? [ent.listColumns]
 							: typeof ent.listColumns == 'string' ? [{headerText:"", selector:ent.listColumns}]
 							: [{headerText:"JSON",selector:"$"}]
-					return res.status(200).json({
+					return {
 							headers:["id"].concat(cols.map(col=>col.headerText)),
 							rows:transpose(
 									[result.rows.map(r=>r.id)].concat(
 									cols.map(col=>jsonpath.query(result.rows,col.selector)))
 								)
-						})
+						}
 				})
 	}
 function expressNewEntity(ctx,ent){
