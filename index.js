@@ -4,7 +4,7 @@ const fs=require('fs')
 const pfs=promisify(fs,undefined,true)
 const hanson = require('hanson')
 const express = require('express')
-const bodyParser = require('body-parser')
+const bodyParser = require('body-parser').json()
 const pg=require('pg')
 const {	not,unique,transpose,truthy,peek} = require('./fabios-functions.js')
 const sqlReservedWords=JSON.parse(fs.readFileSync('./sql-reserved-words.json'))
@@ -65,16 +65,25 @@ function reload(priorServer){
 				.then(ctx=>{//Apply routes
 						const app = express()
 						const auth = authFromConfig(ctx)
+
 						app.use(express.static("./static"))
+
+						/* I prefer CDNs
+						app.use("/modules/jsoneditor",express.static("node_modules/json-editor/dist"))
+						app.use("/modules/jquery",express.static("node_modules/jquery/dist"))
+						app.use("/modules/doT",express.static("node_modules/dot"))
+						app.use("/modules/font-awesome",express.static("node_modules/font-awesome/css"))
+						*/
+
 						app.use(resLocals(()=>parseInt(Date.now()/1000),"dt"))
 
 						app.get("/log",(req,res)=>{console.log("/log "+res.locals.dt);res.status(200).json("Ok")})
 						ctx.entities.forEach(ent=>{
-								app.get ("/api/schema"+ent.route, 		auth, api(getEntitySchema,ctx,ent))
-								app.get ("/api/list"+ent.route,			auth, api(getEntityList,ctx,ent))
-								app.post("/api/new"+ent.route, 			auth, bodyParser, api_newEntity(ctx,ent))
-								app.get ("/api/get"+ent.route+"/:eid", 	auth, api(getEntity,ctx,ent))
-								app.post("/api/set"+ent.route+"/:eid", 	auth, bodyParser,api(setEntity,ctx,ent))
+								app.get ("/api/schema/"+ent.route, 		auth, api(getEntitySchema,ctx,ent))
+								app.get ("/api/list/"+ent.route,			auth, api(getEntityList,ctx,ent))
+								app.post("/api/new/"+ent.route, 			auth, bodyParser, api_newEntity(ctx,ent))
+								app.get ("/api/get/"+ent.route+"/:eid", 	auth, api(getEntity,ctx,ent))
+								app.post("/api/set/"+ent.route+"/:eid", 	auth, bodyParser,api(setEntity,ctx,ent))
 							})
 						//TODO app.post("/rpc",auth,rpcExpress(ctx))
 						app.get("/api/types", auth, api(getTypes,ctx))
@@ -147,18 +156,18 @@ function getEntityList(ctx,ent,req){
 							: typeof ent.listColumns == 'string' ? [{headerText:"", selector:ent.listColumns}]
 							: [{headerText:"JSON",selector:"$"}]
 					return {
+							entity:ent.name,
 							headers:["id"].concat(cols.map(col=>col.headerText)),
-							rows:transpose(
-									[result.rows.map(r=>r.id)].concat(
-									cols.map(col=>jsonpath.query(result.rows,col.selector)))
-								)
+							rows:result.rows.map(row=>[row.id].concat(
+									cols.map(col=>jsonpath.query(row,col.selector).join(","))
+								))
 						}
 				})
 	}
 
 function api_newEntity(ctx,ent){
 		return function(req,res,next){
-				var valid=jsonSchema(req.body,ent.schema);
+				var valid=jsonschema(req.body,ent.schema);
 				if(valid.errors && valid.errors.length){
 						throw {
 								status:400,
@@ -166,20 +175,23 @@ function api_newEntity(ctx,ent){
 							}
 					}
 				ctx.db.query(`
-						DECLARE new_entity_id bigint;
-						BEGIN TRANSACTION;
-						INSERT INTO ${ent.table}_curr
+						WITH curr as (
+							INSERT INTO ${ent.table}_curr
 							(json) values ($1)
-							RETURNING id INTO new_entity_id;
-						INSERT INTO ${ent.table}_hist
-							(eid::int,		user_id,	prev_dt,	edit_dt,	start_dt,	end_dt,		json) values
-							(new_entity_id,	NULL,		NULL,		$2,			NULL,		NULL,		$1);
-						SELECT new_entity_id as eid;
-						COMMIT;
+							RETURNING id
+						)
+						, hist as(
+							INSERT INTO ${ent.table}_hist
+							(eid,			user_id,	prev_dt,	edit_dt,	start_dt,	end_dt,		json)
+							SELECT curr.id,	0,			NULL,		$2,			NULL,		NULL,		$1
+							FROM curr
+						)
+						SELECT curr.id as eid
+						FROM curr
 						`,[JSON.stringify(req.body),res.locals.dt]
 					)
 				.then(rowsElse(500,"Unknown error inserting into the database"))
-				.then(result=>res.redirect(303,"/get"+ent.route+"/"+result.rows[0].eid))
+				.then(rows=>res.redirect(303,"/api/get/"+ent.route+"/"+rows[0].eid))
 				.catch(next)
 			}
 	}
@@ -189,18 +201,25 @@ function getEntity(ctx,ent,req){
 						SELECT json FROM ${ent.table}_curr WHERE id=$1
 					`,[req.params.eid])
 				.then(rowsElse(404,"No entity with the requested id found."))
+				.then(rows=>rows[0].json)
 			;
 	}
 function setEntity(ctx,ent,req){
+		var valid=jsonschema(req.body,ent.schema);
+		if(valid.errors && valid.errors.length){
+				throw {
+						status:400,
+						message:"JSON did not match pattern required for this type of entity.\n "+valid.errors.join("\n")
+					}
+			}
 		return ctx.db.query(`
-						DECLARE new_entity_id bigint;
 						BEGIN TRANSACTION;
 						UPDATE ${ent.table}_curr
 							SET json = $2
 							WHERE id = $1;
 						INSERT INTO ${ent.table}_hist
 							(eid::int,	user_id,	prev_dt,	edit_dt,	start_dt,	end_dt,		json) values
-							($1,		NULL,		NULL,		$3,			NULL,		NULL,		$1);
+							($1,		0,			NULL,		$3,			NULL,		NULL,		$1);
 						COMMIT;
 					`,[req.params.eid, req.body, res.locals.dt])
 				.then(rowsElse(404,"No entity with the requested id found."))
@@ -219,7 +238,7 @@ function dbCreateTable(ctx){
 							id BIGSERIAL PRIMARY KEY,
 							eid INT,
 							user_id INT NOT NULL,
-							prev_dt INT NOT NULL,
+							prev_dt INT,
 							edit_dt INT NOT NULL,
 							start_dt INT,
 							end_dt INT,
@@ -265,10 +284,10 @@ function dbName(str){
 	}
 function routeName(str){
 		return (
-				("/"+str)
-				.replace(/[^\w\/]+(-+[^\w\/]*)*/g,"-") //Non-word, non-slash runs are replaced with a dash
-				.replace(/\/\/+/g,"/")//No consecutive slashes
-				.replace(/\/$/g,"")//No trailing slash
+				(""+str)
+				.replace(/[^\w]+/g,"-") //Non-word runs are replaced with a dash
+				.replace(/^-/g,"")//No leading dash
+				.replace(/-$/g,"")//No trailing dash
 				.toLowerCase()
 			);
 	}

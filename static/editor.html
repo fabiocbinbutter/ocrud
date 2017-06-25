@@ -3,63 +3,66 @@
 <head>
 <title>OCRUD Commander</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- CDN -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js" integrity="sha256-hwg4gsxgFZhOsEEamdOYGBf13FyQuiTwlAQgxVSNgt4=" crossorigin="anonymous"></script>
-<script>
-var fetchTypes=$.getJSON("/api/types")
-</script>
-<!-- Foundation CSS framework (Bootstrap and jQueryUI also supported) -->
-<link rel='stylesheet' href='//cdn.jsdelivr.net/foundation/5.0.2/css/foundation.min.css'>
-<!-- Font Awesome icons (Bootstrap, Foundation, and jQueryUI also supported) -->
-<link rel='stylesheet' href='//cdnjs.cloudflare.com/ajax/libs/font-awesome/4.0.3/css/font-awesome.css'>
+<script>var fetchTypes=$.getJSON("/api/types")</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/json-editor/0.7.28/jsoneditor.min.js" integrity="sha256-51+oMmpgSgS4jV5/DcGKnDHIOL6Jeie2i7ka6sPQVro=" crossorigin="anonymous"></script>
+	<link rel='stylesheet' href='//cdn.jsdelivr.net/foundation/5.0.2/css/foundation.min.css'>
+	<link rel='stylesheet' href='//cdnjs.cloudflare.com/ajax/libs/font-awesome/4.0.3/css/font-awesome.css'>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dot/1.1.2/doT.min.js" integrity="sha256-XEpvFiod8Oc0Md8Bfv4/D5joMS7TEhzg6xKvW50P8Sc=" crossorigin="anonymous"></script>
+<!---->
+<!-- Local -/->
+<script src="/modules/jquery/jquery.min.js"/></script>
+<script>var fetchTypes=$.getJSON("/api/types")</script>
+<script src="/modules/jsoneditor/jsoneditor.min.js"/></script>
+	<link rel='stylesheet' href='/modules/font-awesome/font-awesome.min.css'>
+	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/foundation/5.5.3/css/foundation.min.css" integrity="sha256-NTds7atVCDeolLUzbcl45lx4gJYO+hNXCaX1wC2HQHc=" crossorigin="anonymous" />
+<script src="/modules/dot/doT.min.js"/></script>
+<!---->
 <link rel="stylesheet" href="/common.css">
-</style>
 </head>
 <body>
 	<div id="flash-msg" class="d-n round"></div>
-	<div class="d-fb">
-		<div class="d-n ready picker" style="flex-grow:1">
+	<div id="top-bar" class="d-fb">
+		<div class="d-n picker" style="flex-grow:1">
 			<select id="picker"><option value=''>Pick an entity type</option></select>
 		</div>
-		<form id="new-form">
-		<div class="d-n" width="3em" class="ready new">
-			<input type="submit" style="margin:0 0.5em;right:0;border:1px solid #666" class="round">
-				+
-			</input>
+		<div class="d-n ready new" width="3em">
+			<form id="new-form">
+			<input type="submit" style="margin:0 0.5em;right:0;border:1px solid #666" class="round" value="+ New" />
+			</form>
 		</div>
-	</form>
 	</div>
-	<div id="accordion">
-		<a href="#list" target="#accordion" onclick="return acc(this)">
-			<h2>List</h2>
-		</a>
-		<div class="loading list"></div>
+	<div id="main">
+		<div class="loading list">Loading list...</div>
 		<div id="list" class="d-n ready list"></div>
 		<script id="list-template" type="text/x-dot-template">
-			<table>
-			<thead>
-			<tr>
-				<<*x.headers:header>><th><<:header>></th><<*>>
-				<th>Actions</th>
-			</tr>
-			</thead>
-			<tbody>
-			<<*x.rows:row>><tr>
-				<<*row:val>><td><<:val>><</td><<*>>
-				<td class="edit-entity" data-eid="<<:row[0]>>" style="cursor:pointer">Edit</td>
-			</tr><<*>>
-			</tbody>
-			</table>
+			<<?!x.rows.length>>
+				<div style="text-align:center;padding:1em;">No <<:x.entity.toLowerCase()>> exist</div>
+			<<??>>
+				<table>
+				<thead>
+				<tr>
+					<<*x.headers:header>><th><<:header>></th><<*>>
+					<th>Actions</th>
+				</tr>
+				</thead>
+				<tbody>
+				<<*x.rows:row>><tr>
+					<<*row:val>><td><<:val>></td><<*>>
+					<td class="edit-entity" data-eid="<<:row[0]>>" style="cursor:pointer">Edit</td>
+				</tr><<*>>
+				</tbody>
+				</table>
+			<<?>> <<:"">>
 		</script>
-		<a href="#edit-section" target="#accordion" onclick="return acc(this)">
-			<h2>Edit</h2>
-		</a>
-		<div id="edit-section" class="d-n ready picker">
+		<hr />
+		<div class="d-n ready edit">
 			<form id="edit-form">
 				<div id="editor"></div>
 				<div id='edit-indicator'></div>
-				<input type="submit" value="Go" />
+				<input type="submit" value="Save" />
 			</form>
 		</div>
 	</div>
@@ -106,32 +109,31 @@ doT.templateSettings = {
 		}
 </script>
 <script>
-var globalEditor={validate:function(){return ["Editor not yet loaded"]}};
+var globalEditor={validate:function(){return ["Editor not currently loaded"]}};
 var viewState={
 		"new":{},
 		picker:{},
 		list:{},
-		editor:{}
+		edit:{}
 	}
 const listTemplate = doT.template($("#list-template").text())
 $(document).ready(function(){
-		update();
 		$(window).on('hashchange', update)
 
-		$('#picker').on("change",function(evt){document.location.hash="/list"+this.value})
+		$('#picker').on("change",function(evt){document.location.hash="/list/"+this.value})
 
 		$('#edit-form').on("submit",function(evt){
 				evt.preventDefault();
 				var err=globalEditor.validate();
 				msg({tgt:$("#edit-indicator"),st:"err"})(err.join(", "))
-				$('#edit-indicator').toggle(err.length);
+				$('#edit-indicator').toggle(!!err.length);
 				if(err.length){return}
 				$.post({
-						url: viewState.editor.action=="new"
-								? "/api/new/"+viewState.editor.class
-								: "/api/set/"+viewState.editor.class+"/"+viewState.editor.id
+						url: viewState.edit.id
+								? "/api/set/"+viewState.edit.class+"/"+viewState.edit.id
+								: "/api/new/"+viewState.edit.class
 							,
-						data:JSON.stringify(editor.getValue()),
+						data:JSON.stringify(globalEditor.getValue()),
 						contentType: "application/json"
 					})
 				.then((res)=>$("#notification").text(res).show().delay(5000).fadeOut(2000))
@@ -139,26 +141,31 @@ $(document).ready(function(){
 			})
 		$('#new-form').on("submit",function(evt){
 				evt.preventDefault()
-				document.location.hash="/new/"+viewState.picker.class
+				document.location.hash="/edit/"+viewState.picker.class
 			})
-		$('.edit-entity').on("click",function(evt){
+		$('#list').on("click",".edit-entity",function(evt){
 				document.location.hash="/edit/"+viewState.list.class+"/"+this.dataset.eid
 			})
 
-		fetchTypes.then(types=>types && types.length &&
+		fetchTypes.then(types=>types || [])
+		.then(types=>(viewState.types=types.map(t=>t.route),types))
+		.then(types=>
 				$('#picker')
 				.append(types.map(from({route:"value",name:"label"})).map(option).join(''))
 				.parent().show()
 			)
-			.catch(msg)
+		.then(update)
+		.catch(msg)
 	})
 
 
 function update(){
 		if(document.location.hash[1]!="/"){return;}
 		const r=document.location.hash.split("&")[0].split("/");
-		const route={action:r[1], class:r[2], id:r[3]};
-		var pList,pSchema=Promise.resolve(false),pEntity;
+		const route={action:r[1], class:r[2], id:r[3]}
+		var pList,pSchema=Promise.resolve(),pEntity=Promise.resolve()
+
+		if(viewState.types.indexOf(route.class)<0){route.class=""}
 
 		if(change("picker","class")){
 				//Make sure the class picker shows the current class
@@ -166,29 +173,44 @@ function update(){
 			}
 		if(change("new","class")){
 				//Make sure the "New" button only shows if there is a current class
-				$(".ready.new").toggle(route.class)
+				$(".ready.new").toggle(!!route.class)
 			}
-		if(change("list","class") && route.class){
+		if(change("list","class")){
 				//Have the list show entities of the current class
-				pList=$.getJSON("/api/list/"+route.class)
-				pList.then(list=>$("#list").html(listTemplate(list)))
+				if(route.class){
+						pList=$.getJSON("/api/list/"+route.class)
+						pList.then(list=>{
+								$("#list").html(listTemplate(list))
+								$(".list.loading").hide()
+								$(".list.ready").show()
+							})
+						.catch(msg)
+					} else {
+						$(".list.loading").hide()
+						$(".list.ready").hide()
+					}
 			}
-		if(change("editor","class") && route.class){
-				pSchema=$.getJSON("/api/schema/"+route.class)
-				pSchema=pSchema.then(schema => {
-						globalEditor.destroy();
-						globalEditor=new JSONEditor($("#editor").empty()[0],{schema:schema});
-					})
+		if(change("edit","class") && route.class){
+				pSchema =
+						$.getJSON("/api/schema/"+route.class)
+						.then(schema => {
+								globalEditor.destroy && globalEditor.destroy()
+								globalEditor = new JSONEditor($("#editor").empty()[0],{schema:schema})
+							})
 			}
-		if (change("editor",["action","id"]) && route.class && route.action=="edit"){
-				pEntity=route.id && $.getJSON("/api/get"+route.class+"/"+route.id)
-				Promise.all([pSchema,pEntity])
-				.then([schema,entity]=>{
-						pEntity
-						? globalEditor.setValue(entity)
-						: globalEditor.setValue({}) //Or whatever "clear" method there is..
-					})
+		if (change("edit",["action","id"]) && route.class && route.action=="edit"){
+				if(route.id){
+						pEntity = $.getJSON("/api/get/"+route.class+"/"+route.id)
+					}
 			}
+		Promise.all([pSchema,pEntity])
+		.then(([schema,entity])=>{
+				entity && globalEditor.setValue(entity)
+				if(route.action=="edit"){
+						$(".edit.ready").show()
+					}
+			})
+		.catch(msg)
 
 		return;
 		function change(section,routeParts){
@@ -201,7 +223,7 @@ function update(){
 				var isChanged=routeParts.some(part=>viewState[section][part]!=route[part])
 				if( isChanged ){
 						routeParts.forEach(part=>viewState[section][part]=route[part])
-						$(".ready."+section).hide()
+						//	$(".ready."+section).hide()
 						$(".loading."+section).show()
 					}
 				return isChanged;
