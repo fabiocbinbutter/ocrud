@@ -70,14 +70,14 @@ function reload(priorServer){
 
 						app.get("/log",(req,res)=>{console.log("/log "+res.locals.dt);res.status(200).json("Ok")})
 						ctx.entities.forEach(ent=>{
-								app.get ("/api/schema"+ent.route, auth, schemaApi(ctx,ent))
-								app.get ("/api/list"+ent.route,auth, listEntitiesApi(ctx,ent))
-								app.post("/api/new"+ent.route, auth, bodyParser,expressNewEntity(ctx,ent))
-								app.get ("/api/get"+ent.route+"/:eid", auth, expressGetEntity(ctx,ent))
-								app.post("/api/set"+ent.route+"/:eid", auth, bodyParser,expressSetEntity(ctx,ent))
+								app.get ("/api/schema"+ent.route, 		auth, api(getEntitySchema,ctx,ent))
+								app.get ("/api/list"+ent.route,			auth, api(getEntityList,ctx,ent))
+								app.post("/api/new"+ent.route, 			auth, bodyParser, api_newEntity(ctx,ent))
+								app.get ("/api/get"+ent.route+"/:eid", 	auth, api(getEntity,ctx,ent))
+								app.post("/api/set"+ent.route+"/:eid", 	auth, bodyParser,api(setEntity,ctx,ent))
 							})
 						//TODO app.post("/rpc",auth,rpcExpress(ctx))
-						app.get("/api/types", auth, expressTypes(ctx))
+						app.get("/api/types", auth, api(getTypes,ctx))
 						app.set('json spaces',2)
 						app.use(errorHandler(ctx))
 
@@ -99,13 +99,7 @@ function validateConfig(config){
 				errors:[
 						//database
 						!config.db && "Config missing 'db'",
-						/*
-						 config.db && !config.db.user && "Config property 'db.user' is missing",
-						 config.db && !config.db.password && "Config property 'db.password' is missing",
-						 config.db && !config.db.database && "Config property 'db.database' is missing",
-						 config.db && !config.db.host && "Config property 'db.host' is missing",
-						 config.db && !config.db.port && "Config property 'db.port' is missing",
-						 */
+
 						//webserver
 						!config.webserver && "Config missing 'webserver'",
 						config.webserver && !config.webserver.port && "Config missing 'webserver.port'",
@@ -116,7 +110,6 @@ function validateConfig(config){
 						msgIfArr("Some entities have conflicting route names: ",
 								config.entities.map(c=>c.route).filter(not(unique))
 							)
-
 					].filter(truthy),
 				warnings:[
 						(!config.entities || !config.entities.length) && "No entities were configured",
@@ -125,53 +118,27 @@ function validateConfig(config){
 			}
 	}
 
-function expressTypes(config){
+function api(fn,ctx,ent){
 		return function(req,res,next){
-				res.status(200).json(config.entities.map(e=>({name:e.name,route:e.route})))
-			}
-	}
-
-function schemaApi(ctx,ent){
-		return function(req,res,next){
-				res.status(200).json(ent.schema||{})
-			}
-	}
-/*TODO
-function rpcExpress(ctx){
-		return function(req,res,next){
-				var body=req.body||{}
-				if(typeof body.method != 'string'){res.status(400).send("RPC calls require a method string")}
-				if(!Array.isArray(body.params)){res.status(400).send("RPC calls require a params array")}
-				(body.method=="list"?listEntities():"")
-
-
-				.catch(err=>res.status(200).json({
-						result:null,
-						error:err
-					})
-			}
-	}
-
-function listEntitiesRpcExpress(ctx,ent){
-		return function(req,res,next){
-
-			}
-	}
-
-*/
-function listEntitiesApi(ctx,ent){
-		return function(req,res,next){
-				listEntities(ctx,ent)
-				.then(list=>res.status(200).json(list))
+				Promise.resolve(fn(ctx,ent,req))
+				.then(ret=>res.status(200).json(ret))
 				.catch(next)
 			}
 	}
 
-function listEntities(ctx,ent){
+function getTypes(ctx,ent,req){
+		return ctx.entities.map(e=>({name:e.name,route:e.route}))
+	}
+
+function getEntitySchema(ctx,ent,req){
+		return ent.schema||{}
+	}
+
+function getEntityList(ctx,ent,req){
 		return ctx.db.query(`
 					SELECT id,json
 					FROM ${ent.table}_curr
-					LIMIT 10
+					LIMIT 20
 				`)
 			.then(result=>{
 					const cols =
@@ -188,7 +155,8 @@ function listEntities(ctx,ent){
 						}
 				})
 	}
-function expressNewEntity(ctx,ent){
+
+function api_newEntity(ctx,ent){
 		return function(req,res,next){
 				var valid=jsonSchema(req.body,ent.schema);
 				if(valid.errors && valid.errors.length){
@@ -216,18 +184,15 @@ function expressNewEntity(ctx,ent){
 			}
 	}
 
-function expressGetEntity(ctx,ent){
-		return function(req,res,next){
-				ctx.db.query(`
+function getEntity(ctx,ent,req){
+		return	ctx.db.query(`
 						SELECT json FROM ${ent.table}_curr WHERE id=$1
 					`,[req.params.eid])
 				.then(rowsElse(404,"No entity with the requested id found."))
-				.catch(next)
-			}
+			;
 	}
-function expressSetEntity(ctx,ent){
-		return function(req,res,next){
-				ctx.db.query(`
+function setEntity(ctx,ent,req){
+		return ctx.db.query(`
 						DECLARE new_entity_id bigint;
 						BEGIN TRANSACTION;
 						UPDATE ${ent.table}_curr
@@ -239,8 +204,7 @@ function expressSetEntity(ctx,ent){
 						COMMIT;
 					`,[req.params.eid, req.body, res.locals.dt])
 				.then(rowsElse(404,"No entity with the requested id found."))
-				.catch(next)
-			}
+			;
 	}
 
 function dbCreateTable(ctx){

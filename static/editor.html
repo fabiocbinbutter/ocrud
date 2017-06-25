@@ -22,11 +22,13 @@ var fetchTypes=$.getJSON("/api/types")
 		<div class="d-n ready picker" style="flex-grow:1">
 			<select id="picker"><option value=''>Pick an entity type</option></select>
 		</div>
+		<form id="new-form">
 		<div class="d-n" width="3em" class="ready new">
-			<div style="margin:0 0.5em;right:0;border:1px solid #666" class="round">
+			<input type="submit" style="margin:0 0.5em;right:0;border:1px solid #666" class="round">
 				+
-			</div>
+			</input>
 		</div>
+	</form>
 	</div>
 	<div id="accordion">
 		<a href="#list" target="#accordion" onclick="return acc(this)">
@@ -45,7 +47,7 @@ var fetchTypes=$.getJSON("/api/types")
 			<tbody>
 			<<*x.rows:row>><tr>
 				<<*row:val>><td><<:val>><</td><<*>>
-				<td>Edit <<:row[0]>></td>
+				<td class="edit-entity" data-eid="<<:row[0]>>" style="cursor:pointer">Edit</td>
 			</tr><<*>>
 			</tbody>
 			</table>
@@ -111,29 +113,19 @@ var viewState={
 		list:{},
 		editor:{}
 	}
-
-update();
-$(window).on('hashchange', update)
-$('#picker').on("change",function(evt){document.location.hash="/list"+this.value})
-
 const listTemplate = doT.template($("#list-template").text())
-
 $(document).ready(function(){
-		fetchTypes.then(types=>types && types.length
-				&& $('#picker')
-				.append(types.map(from({route:"value",name:"label"})).map(option).join(''))
-				.parent().show()
-			)
-			.catch(msg)
+		update();
+		$(window).on('hashchange', update)
+
+		$('#picker').on("change",function(evt){document.location.hash="/list"+this.value})
 
 		$('#edit-form').on("submit",function(evt){
 				evt.preventDefault();
-				$('#edit-indicator').hide();
 				var err=globalEditor.validate();
-				if(err.length){
-						msg({tgt:$("#edit-indicator"),st:"err"})(err.join(", "))
-						return;
-					}
+				msg({tgt:$("#edit-indicator"),st:"err"})(err.join(", "))
+				$('#edit-indicator').toggle(err.length);
+				if(err.length){return}
 				$.post({
 						url: viewState.editor.action=="new"
 								? "/api/new/"+viewState.editor.class
@@ -145,49 +137,72 @@ $(document).ready(function(){
 				.then((res)=>$("#notification").text(res).show().delay(5000).fadeOut(2000))
 				.catch(msg)
 			})
+		$('#new-form').on("submit",function(evt){
+				evt.preventDefault()
+				document.location.hash="/new/"+viewState.picker.class
+			})
+		$('.edit-entity').on("click",function(evt){
+				document.location.hash="/edit/"+viewState.list.class+"/"+this.dataset.eid
+			})
+
+		fetchTypes.then(types=>types && types.length &&
+				$('#picker')
+				.append(types.map(from({route:"value",name:"label"})).map(option).join(''))
+				.parent().show()
+			)
+			.catch(msg)
 	})
-
-
 
 
 function update(){
 		if(document.location.hash[1]!="/"){return;}
 		const r=document.location.hash.split("&")[0].split("/");
 		const route={action:r[1], class:r[2], id:r[3]};
-		var pList;
+		var pList,pSchema=Promise.resolve(false),pEntity;
 
 		if(change("picker","class")){
+				//Make sure the class picker shows the current class
 				$("#picker").val(route.class)
 			}
 		if(change("new","class")){
-				if(route.class){$(".ready.new").show()}
+				//Make sure the "New" button only shows if there is a current class
+				$(".ready.new").toggle(route.class)
 			}
-
-		if(change("list","class")){
+		if(change("list","class") && route.class){
+				//Have the list show entities of the current class
 				pList=$.getJSON("/api/list/"+route.class)
 				pList.then(list=>$("#list").html(listTemplate(list)))
 			}
-
-		if(change("editor","class")){
-				$.getJSON("/api/schema/"+route.class)
-				.then(schema => {
+		if(change("editor","class") && route.class){
+				pSchema=$.getJSON("/api/schema/"+route.class)
+				pSchema=pSchema.then(schema => {
 						globalEditor.destroy();
 						globalEditor=new JSONEditor($("#editor").empty()[0],{schema:schema});
-						change("editor",["action","id"])
 					})
-			}else
-		if (change("editor",["action","id"])){
-
+			}
+		if (change("editor",["action","id"]) && route.class && route.action=="edit"){
+				pEntity=route.id && $.getJSON("/api/get"+route.class+"/"+route.id)
+				Promise.all([pSchema,pEntity])
+				.then([schema,entity]=>{
+						pEntity
+						? globalEditor.setValue(entity)
+						: globalEditor.setValue({}) //Or whatever "clear" method there is..
+					})
 			}
 
 		return;
 		function change(section,routeParts){
+				//For a given "section" (in the UI and global viewState)
+				//Updates it with the associated routePart info
+				//If the update represented a change, hides any associated ready sections
+				//, shows any associated loading sections
+				//, and returns true
 				if(!routeParts.forEach){routeParts=[routeParts]}
 				var isChanged=routeParts.some(part=>viewState[section][part]!=route[part])
 				if( isChanged ){
 						routeParts.forEach(part=>viewState[section][part]=route[part])
 						$(".ready."+section).hide()
-						$(".loading."+section).hide()
+						$(".loading."+section).show()
 					}
 				return isChanged;
 			}
