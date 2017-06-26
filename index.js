@@ -81,7 +81,7 @@ function reload(priorServer){
 						ctx.entities.forEach(ent=>{
 								app.get ("/api/schema/"+ent.route, 		auth, api(getEntitySchema,ctx,ent))
 								app.get ("/api/list/"+ent.route,			auth, api(getEntityList,ctx,ent))
-								app.post("/api/new/"+ent.route, 			auth, bodyParser, api_newEntity(ctx,ent))
+								app.post("/api/new/"+ent.route, 			auth, bodyParser, api(newEntity,ctx,ent))
 								app.get ("/api/get/"+ent.route+"/:eid", 	auth, api(getEntity,ctx,ent))
 								app.post("/api/set/"+ent.route+"/:eid", 	auth, bodyParser,api(setEntity,ctx,ent))
 							})
@@ -129,7 +129,7 @@ function validateConfig(config){
 
 function api(fn,ctx,ent){
 		return function(req,res,next){
-				Promise.resolve(fn(ctx,ent,req))
+				Promise.resolve(fn(ctx,ent,req,res,next))
 				.then(ret=>res.status(200).json(ret))
 				.catch(next)
 			}
@@ -145,55 +145,52 @@ function getEntitySchema(ctx,ent,req){
 
 function getEntityList(ctx,ent,req){
 		return ctx.db.query(`
-					SELECT id,json
-					FROM ${ent.table}_curr
-					LIMIT 20
-				`)
-			.then(result=>{
-					const cols =
-							Array.isArray(ent.listColumns) ? ent.listColumns
-							: typeof ent.listColumns == 'object' ? [ent.listColumns]
-							: typeof ent.listColumns == 'string' ? [{headerText:"", selector:ent.listColumns}]
-							: [{headerText:"JSON",selector:"$"}]
-					return {
-							entity:ent.name,
-							headers:["id"].concat(cols.map(col=>col.headerText)),
-							rows:result.rows.map(row=>[row.id].concat(
-									cols.map(col=>jsonpath.query(row,col.selector).join(","))
-								))
-						}
-				})
+				SELECT id,json
+				FROM ${ent.table}_curr
+				LIMIT 20
+			`)
+		.then(result=>{
+				const cols =
+						Array.isArray(ent.listColumns) ? ent.listColumns
+						: typeof ent.listColumns == 'object' ? [ent.listColumns]
+						: typeof ent.listColumns == 'string' ? [{headerText:"", selector:ent.listColumns}]
+						: [{headerText:"JSON",selector:"$"}]
+				return {
+						entity:ent.name,
+						headers:["id"].concat(cols.map(col=>col.headerText)),
+						rows:result.rows.map(row=>
+								[row.id].concat(cols.map(col=>jsonpath.query(row.json,col.selector).join(", ")))
+							)
+					}
+			})
 	}
 
-function api_newEntity(ctx,ent){
-		return function(req,res,next){
-				var valid=jsonschema(req.body,ent.schema);
-				if(valid.errors && valid.errors.length){
-						throw {
-								status:400,
-								message:"JSON did not match pattern required for this type of entity.\n "+valid.errors.join("\n")
-							}
+function newEntity(ctx,ent,req,res){
+		var valid=jsonschema(req.body,ent.schema);
+		if(valid.errors && valid.errors.length){
+				throw {
+						status:400,
+						message:"JSON did not match pattern required for this type of entity.\n "+valid.errors.join("\n")
 					}
-				ctx.db.query(`
-						WITH curr as (
-							INSERT INTO ${ent.table}_curr
-							(json) values ($1)
-							RETURNING id
-						)
-						, hist as(
-							INSERT INTO ${ent.table}_hist
-							(eid,			user_id,	prev_dt,	edit_dt,	start_dt,	end_dt,		json)
-							SELECT curr.id,	0,			NULL,		$2,			NULL,		NULL,		$1
-							FROM curr
-						)
-						SELECT curr.id as eid
-						FROM curr
-						`,[JSON.stringify(req.body),res.locals.dt]
-					)
-				.then(rowsElse(500,"Unknown error inserting into the database"))
-				.then(rows=>res.redirect(303,"/api/get/"+ent.route+"/"+rows[0].eid))
-				.catch(next)
 			}
+		return ctx.db.query(`
+				WITH curr as (
+					INSERT INTO ${ent.table}_curr
+					(json) values ($1)
+					RETURNING id
+				)
+				, hist as(
+					INSERT INTO ${ent.table}_hist
+					(eid,			user_id,	prev_dt,	edit_dt,	start_dt,	end_dt,		json)
+					SELECT curr.id,	0,			NULL,		$2,			NULL,		NULL,		$1
+					FROM curr
+				)
+				SELECT curr.id as eid
+				FROM curr
+				`,[JSON.stringify(req.body),res.locals.dt]
+			)
+		.then(rowsElse(500,"Unknown error inserting into the database"))
+		.then(rows=>({message:"Created "+ent.name+" #"+rows[0].eid}))
 	}
 
 function getEntity(ctx,ent,req){
@@ -204,7 +201,7 @@ function getEntity(ctx,ent,req){
 				.then(rows=>rows[0].json)
 			;
 	}
-function setEntity(ctx,ent,req){
+function setEntity(ctx,ent,req,res){
 		var valid=jsonschema(req.body,ent.schema);
 		if(valid.errors && valid.errors.length){
 				throw {
@@ -213,16 +210,24 @@ function setEntity(ctx,ent,req){
 					}
 			}
 		return ctx.db.query(`
-						BEGIN TRANSACTION;
-						UPDATE ${ent.table}_curr
+						WITH curr as (
+							UPDATE ${ent.table}_curr
 							SET json = $2
-							WHERE id = $1;
-						INSERT INTO ${ent.table}_hist
-							(eid::int,	user_id,	prev_dt,	edit_dt,	start_dt,	end_dt,		json) values
-							($1,		0,			NULL,		$3,			NULL,		NULL,		$1);
-						COMMIT;
+							WHERE id = $1
+							RETURNING id
+						)
+						, hist as (
+							INSERT INTO ${ent.table}_hist
+								(	eid,		user_id,	prev_dt,	edit_dt,	start_dt,	end_dt,		json)
+							SELECT 	curr.id,	0,			NULL,		$3,			NULL,		NULL,		$2
+							FROM curr
+							WHERE curr.id = $1
+						)
+						SELECT id as eid
+						FROM curr
 					`,[req.params.eid, req.body, res.locals.dt])
 				.then(rowsElse(404,"No entity with the requested id found."))
+				.then(rows=>({message:"Updated "+ent.name+" #"+rows[0].eid}))
 			;
 	}
 

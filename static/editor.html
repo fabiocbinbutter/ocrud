@@ -136,8 +136,10 @@ $(document).ready(function(){
 						data:JSON.stringify(globalEditor.getValue()),
 						contentType: "application/json"
 					})
-				.then((res)=>$("#notification").text(res).show().delay(5000).fadeOut(2000))
+				.then(msg({st:"ok"}))
 				.catch(msg)
+				//.then((res)=>$("#notification").text(res).show().delay(5000).fadeOut(2000))
+				//.catch(msg)
 			})
 		$('#new-form').on("submit",function(evt){
 				evt.preventDefault()
