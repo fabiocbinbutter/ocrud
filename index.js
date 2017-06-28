@@ -22,6 +22,7 @@ function extend(subjOrHow, howOrNone){
 			}
 		//Curried version is extend(how)(subj) to use with promises
 		const how=subjOrHow;
+		//How is either an object (to extend the base with) or a function (to apply to the base and then extend it with)
 		return function(subj){
 				if(Array.isArray(subj)){
 						return subj.map(item=>extend(item,how))
@@ -52,7 +53,8 @@ function reload(priorServer){
 							} else { return config}
 					})
 				.then(extend(config=>({ //Post-validation transformations
-						db:new pg.Pool(config.db)
+						db:new pg.Pool(config.db),
+						webserver:
 						/* Can I "precompile" validation functions?
 						entities:extend(config.entities,entity=>({
 								validator:jsonschema(entity.schema)

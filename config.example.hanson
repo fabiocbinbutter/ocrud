@@ -8,21 +8,14 @@
 			max: 10,
 			idleTimeoutMillis: 60000
 		},
-	authenticatorCert:"",
-	users:{
-			user:"",dateFrom:"",dateTo:""
-		},
+	webserver:{
+		port:18880
+	},
 	entities:[{
 			name: "planets"
-			/*import:{
-				src:"",
-				mappings:[
-					{expose:"", from:""}
-				]
-			},*/
 			schema: {type:"string",title:"Planet"},
-			table:"",
-			route: ""
+			table:"", //For postgres. If falsy, use name
+			route: "" //For APIs. If falsy, use name
 		}
 		]
 }
