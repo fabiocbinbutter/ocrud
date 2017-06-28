@@ -53,8 +53,7 @@ function reload(priorServer){
 							} else { return config}
 					})
 				.then(extend(config=>({ //Post-validation transformations
-						db:new pg.Pool(config.db),
-						webserver:
+						db:new pg.Pool(config.db)
 						/* Can I "precompile" validation functions?
 						entities:extend(config.entities,entity=>({
 								validator:jsonschema(entity.schema)

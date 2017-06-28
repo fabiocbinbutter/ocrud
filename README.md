@@ -10,6 +10,8 @@ An "object"-based CRUD app that leverages a variety of JSON tools:
 - jdorn's JSON editor to provide a rich editor for the objects
 - Server-side validation via the same json schema that enabled the editor
 
+![Screenshot](docs/ocrud.png)
+
 Roadmap:
 - Authentication (probably via JWT)
 - Querying based on postgres GIN operators
